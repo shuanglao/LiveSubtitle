@@ -45,18 +45,6 @@ jobs:
           echo "==> downloading $AAR_URL"
           curl -L --fail --retry 5 --retry-delay 5 -C - -o app/libs/sherpa-onnx.aar "$AAR_URL"
           ls -lh app/libs/
-      - name: Download streaming zipformer model
-        run: |
-          MODEL_NAME="sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
-          DEST="app/src/main/assets/${MODEL_NAME}"
-          mkdir -p "${DEST}"
-          BASE="https://huggingface.co/csukuangfj/${MODEL_NAME}/resolve/main"
-          for f in encoder-epoch-99-avg-1.int8.onnx decoder-epoch-99-avg-1.onnx joiner-epoch-99-avg-1.int8.onnx tokens.txt; do
-            echo "==> downloading $f"
-            curl -L --fail --retry 3 --retry-delay 5 -o "${DEST}/$f" "${BASE}/$f"
-          done
-          ls -lh "${DEST}"
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 

@@ -150,14 +150,18 @@ public class SherpaAsrEngine implements AsrEngine {
         }
     }
 
-    /** 确保模型已复制到 filesDir（首次启动时复制，之后跳过） */
+    /**
+     * 确保模型文件已就绪：优先使用 filesDir 中已下载的模型；
+     * 若 APK 内仍有内嵌 assets 模型则解压；否则首次启动联网下载。
+     * 说明：模型约 190MB，内嵌进 APK 会使安装 dexopt 阶段内存峰值过高，
+     * 被 LMK 杀掉导致安装永远无法完成，故 APK 内不再携带模型。
+     */
     private void ensureModel() throws Exception {
         File target = new File(context.getFilesDir(), MODEL_DIR);
         File encoder = new File(target, ENCODER);
         File decoder = new File(target, DECODER);
         File joiner = new File(target, JOINER);
         File tokens = new File(target, TOKENS);
-
         if (encoder.exists() && decoder.exists() && joiner.exists() && tokens.exists()
                 && encoder.length() > 1024) {
             return;
@@ -166,7 +170,127 @@ public class SherpaAsrEngine implements AsrEngine {
             //noinspection ResultOfMethodCallIgnored
             target.mkdirs();
         }
-        copyAssetsDir(MODEL_DIR, target);
+
+        boolean hasAsset = false;
+        try {
+            String[] children = context.getAssets().list(MODEL_DIR);
+            hasAsset = children != null && children.length > 0;
+        } catch (Throwable ignore) {
+        }
+        if (hasAsset) {
+            emitStatus("\u6b63\u5728\u91ca\u653e\u5185\u7f6e\u6a21\u578b\uff0c\u8bf7\u7a0d\u5019\u2026");
+            copyAssetsDir(MODEL_DIR, target);
+            return;
+        }
+
+        emitStatus("\u9996\u6b21\u542f\u52a8\uff0c\u6b63\u5728\u4e0b\u8f7d\u8bed\u97f3\u6a21\u578b\uff08\u7ea6 190MB\uff09\uff0c\u8bf7\u4fdd\u6301\u7f51\u7edc\u7545\u901a\u2026");
+        downloadModel(target);
+    }
+
+    /** 模型下载基址（HuggingFace 官方仓库） */
+    private static final String MODEL_BASE_URL =
+            "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/";
+
+    /** 逐个下载模型文件，已存在且有效的跳过，支持断点续传 */
+    private void downloadModel(File target) throws Exception {
+        String[] names = new String[]{ENCODER, DECODER, JOINER, TOKENS};
+        for (int i = 0; i < names.length; i++) {
+            String name = names[i];
+            File out = new File(target, name);
+            if (out.exists() && out.length() > 1024) {
+                continue;
+            }
+            File part = new File(target, name + ".part");
+            long startAt = part.exists() ? part.length() : 0L;
+            emitStatus("\u4e0b\u8f7d\u6a21\u578b " + (i + 1) + "/" + names.length + "\uff1a" + name);
+            downloadOne(MODEL_BASE_URL + name, part, startAt);
+            if (part.exists() && part.length() > 1024) {
+                //noinspection ResultOfMethodCallIgnored
+                if (out.exists()) out.delete();
+                if (!part.renameTo(out)) {
+                    copyFile(part, out);
+                    //noinspection ResultOfMethodCallIgnored
+                    part.delete();
+                }
+            }
+        }
+        Log.i(TAG, "model download finished");
+    }
+
+    /** 单文件下载，startAt>0 时用 Range 续传 */
+    private void downloadOne(String urlStr, File dest, long startAt) throws Exception {
+        java.net.HttpURLConnection conn = null;
+        InputStream in = null;
+        OutputStream os = null;
+        try {
+            java.net.URL url = new java.net.URL(urlStr);
+            conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(60000);
+            conn.setInstanceFollowRedirects(true);
+            if (startAt > 0) {
+                conn.setRequestProperty("Range", "bytes=" + startAt + "-");
+            }
+            int code = conn.getResponseCode();
+            if (code == 206) {
+                os = new FileOutputStream(dest, true);
+            } else if (code == 200) {
+                startAt = 0L;
+                os = new FileOutputStream(dest, false);
+            } else {
+                throw new java.io.IOException("HTTP " + code + " for " + urlStr);
+            }
+            in = conn.getInputStream();
+            byte[] buf = new byte[65536];
+            long total = conn.getContentLength() + startAt;
+            long done = startAt;
+            long lastEmit = 0L;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                os.write(buf, 0, n);
+                done += n;
+                long now = System.currentTimeMillis();
+                if (now - lastEmit > 800) {
+                    lastEmit = now;
+                    int pct = total > 0 ? (int) (done * 100 / total) : -1;
+                    emitStatus("\u4e0b\u8f7d\u4e2d " + (done / 1048576) + "MB"
+                            + (pct >= 0 ? " / " + pct + "%" : ""));
+                }
+            }
+            os.flush();
+        } finally {
+            closeQuietly(in);
+            closeQuietly(os);
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private void copyFile(File src, File dst) throws Exception {
+        InputStream in = null;
+        OutputStream os = null;
+        try {
+            in = new java.io.FileInputStream(src);
+            os = new FileOutputStream(dst);
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            os.flush();
+        } finally {
+            closeQuietly(in);
+            closeQuietly(os);
+        }
+    }
+
+    /** 向界面回报准备阶段状态 */
+    private void emitStatus(String msg) {
+        Log.i(TAG, "status: " + msg);
+        AsrEngine.Callback cb = callback;
+        if (cb != null) {
+            try {
+                cb.onPartial("\u23f3 " + msg);
+            } catch (Throwable ignore) {
+            }
+        }
     }
 
     /** 递归复制 assets 子目录到目标目录 */
