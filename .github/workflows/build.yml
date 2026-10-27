@@ -57,16 +57,6 @@ jobs:
           done
           ls -lh "${DEST}"
 
-      - name: Probe sherpa-onnx AAR class signatures
-        run: |
-          cd /tmp && rm -rf aarx && mkdir aarx && cd aarx
-          unzip -o -q "$GITHUB_WORKSPACE/app/libs/sherpa-onnx.aar" classes.jar
-          unzip -o -q classes.jar -d cls
-          ls cls/com/k2fsa/sherpa/onnx/ | head -50
-          for c in OnlineRecognizer OnlineRecognizerConfig OnlineModelConfig OnlineTransducerModelConfig EndpointConfig EndpointRule FeatureConfig; do
-            echo "===== $c ====="
-            javap -p -classpath cls com.k2fsa.sherpa.onnx.$c 2>&1 | head -60
-          done
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 

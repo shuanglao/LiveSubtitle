@@ -9,6 +9,7 @@ import android.util.Log;
 
 import com.k2fsa.sherpa.onnx.EndpointConfig;
 import com.k2fsa.sherpa.onnx.EndpointRule;
+import com.k2fsa.sherpa.onnx.FeatureConfig;
 import com.k2fsa.sherpa.onnx.OnlineModelConfig;
 import com.k2fsa.sherpa.onnx.OnlineRecognizer;
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig;
@@ -212,55 +213,45 @@ public class SherpaAsrEngine implements AsrEngine {
         }
     }
 
-    /** 按 master 分支 Builder 风格构造识别器 */
+    /**
+     * 按 sherpa-onnx AAR 真实签名构造识别器。
+     * 注意：发布版 AAR 由 Kotlin 编译（OnlineRecognizer.kt），没有 builder()，
+     * 只有无参构造器 + setter，以及 OnlineRecognizer(AssetManager, config)。
+     * createStream 只有带参重载，传 "" 即默认。
+     */
     private void initRecognizer() {
         String modelDir = new File(context.getFilesDir(), MODEL_DIR).getAbsolutePath();
 
-        OnlineTransducerModelConfig transducer = OnlineTransducerModelConfig.builder()
-                .setEncoder(modelDir + "/" + ENCODER)
-                .setDecoder(modelDir + "/" + DECODER)
-                .setJoiner(modelDir + "/" + JOINER)
-                .build();
+        OnlineTransducerModelConfig transducer = new OnlineTransducerModelConfig();
+        transducer.setEncoder(modelDir + "/" + ENCODER);
+        transducer.setDecoder(modelDir + "/" + DECODER);
+        transducer.setJoiner(modelDir + "/" + JOINER);
 
-        OnlineModelConfig modelConfig = OnlineModelConfig.builder()
-                .setTransducer(transducer)
-                .setTokens(modelDir + "/" + TOKENS)
-                .setModelType("zipformer")
-                .setNumThreads(2)
-                .setDebug(false)
-                .setProvider("cpu")
-                .build();
+        OnlineModelConfig modelConfig = new OnlineModelConfig();
+        modelConfig.setTransducer(transducer);
+        modelConfig.setTokens(modelDir + "/" + TOKENS);
+        modelConfig.setModelType("zipformer");
+        modelConfig.setNumThreads(2);
+        modelConfig.setDebug(false);
+        modelConfig.setProvider("cpu");
 
-        EndpointRule rule1 = EndpointRule.builder()
-                .setMustContainNonSilence(false)
-                .setMinTrailingSilence(2.4f)
-                .setMinUtteranceLength(0f)
-                .build();
-        EndpointRule rule2 = EndpointRule.builder()
-                .setMustContainNonSilence(true)
-                .setMinTrailingSilence(1.2f)
-                .setMinUtteranceLength(0f)
-                .build();
-        EndpointRule rule3 = EndpointRule.builder()
-                .setMustContainNonSilence(false)
-                .setMinTrailingSilence(0f)
-                .setMinUtteranceLength(20f)
-                .build();
-        EndpointConfig endpointConfig = EndpointConfig.builder()
-                .setRule1(rule1)
-                .setRule2(rule2)
-                .setRule3(rule3)
-                .build();
+        EndpointRule rule1 = new EndpointRule(false, 2.4f, 0f);
+        EndpointRule rule2 = new EndpointRule(true, 1.2f, 0f);
+        EndpointRule rule3 = new EndpointRule(false, 0f, 20f);
+        EndpointConfig endpointConfig = new EndpointConfig();
+        endpointConfig.setRule1(rule1);
+        endpointConfig.setRule2(rule2);
+        endpointConfig.setRule3(rule3);
 
-        OnlineRecognizerConfig config = OnlineRecognizerConfig.builder()
-                .setOnlineModelConfig(modelConfig)
-                .setEndpointConfig(endpointConfig)
-                .setEnableEndpoint(true)
-                .setDecodingMethod("greedy_search")
-                .build();
+        OnlineRecognizerConfig config = new OnlineRecognizerConfig();
+        config.setFeatConfig(new FeatureConfig());
+        config.setModelConfig(modelConfig);
+        config.setEndpointConfig(endpointConfig);
+        config.setEnableEndpoint(true);
+        config.setDecodingMethod("greedy_search");
 
-        recognizer = new OnlineRecognizer(config);
-        stream = recognizer.createStream();
+        recognizer = new OnlineRecognizer(context.getAssets(), config);
+        stream = recognizer.createStream("");
         Log.i(TAG, "recognizer ready, modelDir=" + modelDir);
     }
 
