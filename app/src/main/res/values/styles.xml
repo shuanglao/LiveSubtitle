@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LiveSubtitle" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#2E7D5B</item>
+        <item name="colorPrimaryDark">#1F5A41</item>
+        <item name="colorAccent">#2E7D5B</item>
+        <item name="android:windowBackground">#FFF8F6F1</item>
+        <item name="android:statusBarColor">#1F5A41</item>
+    </style>
+</resources>

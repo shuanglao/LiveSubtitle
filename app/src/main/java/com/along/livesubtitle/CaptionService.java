@@ -1,0 +1,280 @@
+package com.along.livesubtitle;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.BitmapFactory;
+import android.os.Build;
+import android.os.IBinder;
+import android.widget.Toast;
+
+/**
+ * 字幕前台服务。
+ *
+ * 职责：
+ *  1) 保活（前台通知），保证后台不被杀
+ *  2) 创建并管理悬浮字幕窗（CaptionWindow）
+ *  3) 创建并驱动识别引擎（AsrEngine）
+ *  4) 把引擎结果转发给字幕窗
+ */
+public class CaptionService extends Service implements CaptionWindow.Listener {
+
+    public static final String ACTION_START = "com.along.livesubtitle.START";
+    public static final String ACTION_STOP = "com.along.livesubtitle.STOP";
+    public static final String ACTION_REFRESH_STYLE = "com.along.livesubtitle.REFRESH_STYLE";
+    public static final String ACTION_TOGGLE_LOCK = "com.along.livesubtitle.TOGGLE_LOCK";
+
+    private static final String CHANNEL_ID = "live_subtitle";
+    private static final int NOTI_ID = 1001;
+
+    private Prefs prefs;
+    private CaptionWindow window;
+    private AsrEngine engine;
+
+    private boolean running = false;
+
+    // ============================================================
+    //  生命周期
+    // ============================================================
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        prefs = new Prefs(this);
+        createChannel();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? ACTION_START : intent.getAction();
+        if (action == null) action = ACTION_START;
+
+        if (ACTION_STOP.equals(action)) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        if (ACTION_REFRESH_STYLE.equals(action)) {
+            if (window != null && window.isShowing()) window.refreshStyle();
+            return START_STICKY;
+        }
+
+        if (ACTION_TOGGLE_LOCK.equals(action)) {
+            if (window != null && window.isShowing()) {
+                boolean next = !window.isLocked();
+                window.setInitialLocked(next);
+                prefs.setLocked(next);
+                updateNotification(next);
+            }
+            return START_STICKY;
+        }
+
+        // ACTION_START
+        startForegroundSafe();
+        if (!running) {
+            startCaption();
+        }
+        return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        stopCaption();
+        prefs.setEnabled(false);
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    // ============================================================
+    //  启动 / 停止字幕
+    // ============================================================
+
+    private void startCaption() {
+        running = true;
+
+        // 1) 悬浮窗
+        if (window == null) {
+            window = new CaptionWindow(this, prefs);
+            window.setListener(this);
+        }
+        window.setInitialLocked(prefs.isLockedRemembered());
+        window.show();
+
+        // 2) 引擎
+        startEngine();
+
+        prefs.setEnabled(true);
+        updateNotification(window.isLocked());
+    }
+
+    private void startEngine() {
+        stopEngine();
+
+        int mode = prefs.getAudioMode();
+
+        if (mode == 1 || mode == 2) {
+            // 内录模式（含自动降级）
+            if (isProjectionReady()) {
+                // 注意：PlaybackCaptureEngine 属第二阶段（需要 sherpa-onnx 喂 PCM）
+                // 现阶段若用户选内录但引擎未就绪，直接降级并提示
+                if (mode == 1) {
+                    toast("内录引擎尚未就绪，已切换为麦克风");
+                }
+            } else if (mode == 1) {
+                toast("未授权录屏，已切换为麦克风");
+            }
+        }
+
+        // 麦克风模式（第一阶段默认路径）
+        engine = new SherpaAsrEngine(this);
+        engine.start(new AsrEngine.Callback() {
+            @Override
+            public void onResult(String text, boolean isFinal) {
+                if (window != null) window.onAsrResult(text, isFinal);
+            }
+
+            @Override
+            public void onError(int code, String msg) {
+                // 静默处理，避免频繁弹提示干扰
+            }
+
+            @Override
+            public void onVolume(float level) {
+                // 预留：可选在窗口上画音量条
+            }
+        });
+    }
+
+    private void stopEngine() {
+        if (engine != null) {
+            try {
+                engine.release();
+            } catch (Throwable ignore) {
+            }
+            engine = null;
+        }
+    }
+
+    private void stopCaption() {
+        running = false;
+        stopEngine();
+        if (window != null) {
+            window.hide();
+            window = null;
+        }
+    }
+
+    /** 录屏授权是否已就绪（第二阶段内录使用） */
+    private boolean isProjectionReady() {
+        // 第一阶段：始终返回 false，等 PlaybackCaptureEngine 落地后再改
+        return false;
+    }
+
+    // ============================================================
+    //  CaptionWindow.Listener
+    // ============================================================
+
+    @Override
+    public void onLockToggle(boolean locked) {
+        updateNotification(locked);
+            if (locked) {
+            toast("已锁定：触摸将穿透字幕窗");
+        } else {
+            toast("已解锁：可拖动调整");
+        }
+    }
+
+    @Override
+    public void onClose() {
+        stopSelf();
+    }
+
+    @Override
+    public void onGeometryChanged(int x, int y, int wDp, int hDp) {
+        // 位置尺寸已由 CaptionWindow 存入 Prefs，这里无需额外处理
+    }
+
+    // ============================================================
+    //  通知
+    // ============================================================
+
+    private void createChannel() {
+        if (Build.VERSION.SDK_INT < 26) return;
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        NotificationChannel ch = new NotificationChannel(
+                CHANNEL_ID, "实时字幕", NotificationManager.IMPORTANCE_LOW);
+        ch.setDescription("实时字幕运行状态");
+        ch.setShowBadge(false);
+        nm.createNotificationChannel(ch);
+    }
+
+    private void startForegroundSafe() {
+        try {
+            startForeground(NOTI_ID, buildNotification(false));
+        } catch (Throwable t) {
+            try {
+                Notification n = buildNotification(false);
+                startForeground(NOTI_ID, n);
+            } catch (Throwable ignore) {
+            }
+        }
+    }
+
+    private void updateNotification(boolean locked) {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        try {
+            nm.notify(NOTI_ID, buildNotification(locked));
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private Notification buildNotification(boolean locked) {
+        Intent open = new Intent(this, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent piOpen = PendingIntent.getActivity(
+                this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        Intent lock = new Intent(this, CaptionService.class);
+        lock.setAction(ACTION_TOGGLE_LOCK);
+        PendingIntent piLock = PendingIntent.getService(
+                this, 1, lock, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        Intent stop = new Intent(this, CaptionService.class);
+        stop.setAction(ACTION_STOP);
+        PendingIntent piStop = PendingIntent.getService(
+                this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        Notification.Builder b;
+        if (Build.VERSION.SDK_INT >= 26) {
+            b = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            b = new Notification.Builder(this);
+        }
+
+        b.setContentTitle("实时字幕运行中")
+                .setContentText(locked ? "字幕窗已锁定（触摸穿透）" : "字幕窗未锁定，可拖动调整")
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setContentIntent(piOpen)
+                .setOngoing(true)
+                .setPriority(Notification.PRIORITY_LOW)
+                .addAction(android.R.drawable.ic_lock_lock,
+                        locked ? "解锁" : "锁定", piLock)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止", piStop);
+
+        return b.build();
+    }
+
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+    }
+}

@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# 模型文件由 CI 下载，不入库（每个约 200MB+）
+/app/src/main/assets/sherpa-onnx-streaming-*/

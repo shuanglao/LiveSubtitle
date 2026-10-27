@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace "com.along.livesubtitle"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.along.livesubtitle"
+        minSdk 28
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    // APK 里带模型，关闭压缩会更好装（体积控制交给 minify 关闭 + int8 模型）
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+        // 避免 assets 里的 onnx 模型被压缩
+        resources {
+            excludes += ['META-INF/**']
+        }
+    }
+    androidResources {
+        noCompress 'onnx', 'txt'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    // ★ sherpa-onnx 内核（JitPack，自带 arm64-v8a .so，无需 NDK）
+    implementation 'com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v2.0.1'
+}
