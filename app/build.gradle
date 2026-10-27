@@ -12,6 +12,10 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+        // 只打手机需要的 ABI，砍掉 x86/x86_64（省 ~70MB 解压体积）
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
     }
 
     buildTypes {
@@ -27,7 +31,7 @@ android {
     // APK 里带模型，关闭压缩会更好装（体积控制交给 minify 关闭 + int8 模型）
     packagingOptions {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
         }
         // 避免 assets 里的 onnx 模型被压缩
         resources {
