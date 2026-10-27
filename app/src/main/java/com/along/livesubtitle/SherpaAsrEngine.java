@@ -287,7 +287,7 @@ public class SherpaAsrEngine implements AsrEngine {
         AsrEngine.Callback cb = callback;
         if (cb != null) {
             try {
-                cb.onPartial("\u23f3 " + msg);
+                cb.onResult("\u23f3 " + msg, false);
             } catch (Throwable ignore) {
             }
         }
