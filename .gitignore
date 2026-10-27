@@ -12,3 +12,6 @@ local.properties
 
 # 模型文件由 CI 下载，不入库（每个约 200MB+）
 /app/src/main/assets/sherpa-onnx-streaming-*/
+
+# local prebuilt AAR (downloaded by CI)
+app/libs/*.aar

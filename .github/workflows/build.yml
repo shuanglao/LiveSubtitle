@@ -38,6 +38,13 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      - name: Download sherpa-onnx AAR (official release)
+        run: |
+          mkdir -p app/libs
+          AAR_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar"
+          echo "==> downloading $AAR_URL"
+          curl -L --fail --retry 5 --retry-delay 5 -C - -o app/libs/sherpa-onnx.aar "$AAR_URL"
+          ls -lh app/libs/
       - name: Download streaming zipformer model
         run: |
           MODEL_NAME="sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
