@@ -34,6 +34,7 @@ public class MainActivity extends Activity {
     private static final int C_SUB = 0xFF7A8B89;
 
     private static final int REQ_AUDIO = 100;
+    private static final String NL = String.valueOf((char) 10);
 
     private Prefs prefs;
     private TextView tvOverlayState;
@@ -46,7 +47,25 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = new Prefs(this);
-        buildUi();
+        try {
+            buildUi();
+        } catch (Throwable t) {
+            StringBuilder sb = new StringBuilder("UI build failed: ");
+            sb.append(t.toString()).append(NL);
+            StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < st.length && sb.length() < 2500; i++) {
+                sb.append(st[i].toString()).append(NL);
+            }
+            TextView err = new TextView(this);
+            err.setText(sb.toString());
+            err.setTextSize(11f);
+            err.setTextColor(0xFFB00020);
+            err.setPadding(dp(16), dp(60), dp(16), dp(16));
+            ScrollView sc = new ScrollView(this);
+            sc.setBackgroundColor(0xFFFFF3F3);
+            sc.addView(err);
+            setContentView(sc);
+        }
     }
 
     @Override
@@ -62,7 +81,7 @@ public class MainActivity extends Activity {
     private void buildUi() {
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(C_BG);
-        sv.setFillViewport(true);
+        sv.setFillViewport(false);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -102,11 +121,7 @@ public class MainActivity extends Activity {
         tvOverlayState = stateRow(card, "悬浮窗权限");
         tvAudioState = stateRow(card, "录音权限");
 
-        LinearLayout.LayoutParams bottomGap = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        bottomGap.topMargin = dp(20);
-        root.addView(new View(this), bottomGap);
+        // 空隙直接用 btnLp() 的 topMargin 实现，不再塞空 View（空 View 会导致测量异常、按钮不显示）
 
         // ---- 权限按钮 ----
         btnOverlay = actionButton("① 授予悬浮窗权限");
@@ -214,7 +229,11 @@ public class MainActivity extends Activity {
         b.setAllCaps(false);
         b.setTextSize(15f);
         b.setTextColor(C_ACCENT);
-        b.setBackground(rounded(C_CARD, 14));
+        b.setPadding(dp(16), 0, dp(16), 0);
+        GradientDrawable g = rounded(C_CARD, 14);
+        g.setStroke(dp(1.5f), 0xFFCBD8D6);
+        b.setBackground(g);
+        b.setMinHeight(dp(48));
         return b;
     }
 
