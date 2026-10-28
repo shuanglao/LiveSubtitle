@@ -9,6 +9,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
+import android.util.Log;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -77,8 +85,23 @@ public class CaptionWindow {
     private int downLpX, downLpY, downW, downH;
     private boolean dragging = false;
     private boolean resizing = false;
-
     private int screenW, screenH;
+
+    /** 写 svc.log（与 CaptionService.logf 共用同一文件，便于统一排查） */
+    private void wlog(String msg) {
+        try {
+            File f = new File(ctx.getFilesDir(), "svc.log");
+            if (f.exists() && f.length() > 256 * 1024) f.delete();
+            String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+            FileOutputStream fos = new FileOutputStream(f, true);
+            OutputStreamWriter w = new OutputStreamWriter(fos, "UTF-8");
+            w.write(ts + " [win] " + msg + "\n");
+            w.flush();
+            w.close();
+        } catch (Throwable ignore) {
+        }
+    }
+
 
     public CaptionWindow(Context ctx, Prefs prefs) {
         this.ctx = ctx;
@@ -109,13 +132,20 @@ public class CaptionWindow {
         if (added) return;
         buildViews();
         lp = buildLp();
+        wlog("show() addView begin: type=" + lp.type + " x=" + lp.x + " y=" + lp.y
+                + " w=" + lp.width + " h=" + lp.height + " flags=0x" + Integer.toHexString(lp.flags)
+                + " gravity=" + lp.gravity + " screen=" + screenW + "x" + screenH);
         try {
             wm.addView(root, lp);
             added = true;
+            wlog("show() addView SUCCESS, root.parent=" + (root.getParent() != null)
+                    + " visibility=" + root.getVisibility()
+                    + " w=" + root.getWidth() + " h=" + root.getHeight());
             applyLockedState(locked, false);
             refreshStyle();
         } catch (Throwable t) {
             added = false;
+            wlog("show() addView FAILED: " + Log.getStackTraceString(t));
         }
     }
 

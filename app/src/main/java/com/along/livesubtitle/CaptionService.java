@@ -111,7 +111,12 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             }
             window.setInitialLocked(prefs.isLockedRemembered());
             window.show();
-            logf("CaptionWindow show OK");
+            if (window.isShowing()) {
+                logf("CaptionWindow show OK (isShowing=true)");
+            } else {
+                logf("CaptionWindow show FAILED (isShowing=false, addView 内部失败，见 [win] 日志)");
+                toast("悬浮窗添加失败，请看 svc.log");
+            }
         } catch (Throwable t) {
             logf("CaptionWindow FAILED: " + Log.getStackTraceString(t));
             toast("悬浮窗显示失败：" + t.getClass().getSimpleName());
