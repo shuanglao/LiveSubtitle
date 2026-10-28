@@ -531,6 +531,18 @@ public class CaptionWindow {
         }
     }
 
+    /** 在字幕区显示一行状态（引擎错误/下载进度等），让用户能看见程序在干什么 */
+    public void setStatusText(final String text) {
+        post(new Runnable() {
+            @Override public void run() {
+                if (tvBody == null) return;
+                tvBody.setVisibility(View.VISIBLE);
+                tvBody.setTextColor(0xFFFF6B6B);
+                tvBody.setText(text);
+            }
+        });
+    }
+
     // ============================================================
     //  样式
     // ============================================================

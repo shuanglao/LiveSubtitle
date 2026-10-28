@@ -165,7 +165,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
             @Override
             public void onError(int code, String msg) {
-                // 静默处理，避免频繁弹提示干扰
+                // 不再静默：落盘 + 窗口提示 + toast（本机 logcat 读不到，必须显式落盘）
+                logf("ASR ENGINE ERROR code=" + code + " msg=" + msg);
+                if (window != null) window.setStatusText("引擎错误 " + code + ": " + msg);
+                toast("引擎错误：" + msg);
             }
 
             @Override

@@ -658,8 +658,22 @@ public class SherpaAsrEngine implements AsrEngine {
         }
     }
 
+    /** 引擎侧落盘（本机 logcat 读不到，必须显式写文件） */
+    private void elog(String msg) {
+        try {
+            java.io.File f = new java.io.File(context.getFilesDir(), "svc.log");
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
+            String ts = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date());
+            fos.write((ts + " [eng] " + msg + "\n").getBytes("UTF-8"));
+            fos.flush();
+            fos.close();
+        } catch (Throwable ignore) {
+        }
+    }
     private void emitError(int code, String msg) {
         Log.w(TAG, "error " + code + ": " + msg);
+        elog("ERROR code=" + code + " msg=" + msg);
         AsrEngine.Callback cb = callback;
         if (cb != null) {
             try {
