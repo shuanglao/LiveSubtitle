@@ -4,6 +4,9 @@
 
     <!-- 麦克风 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 网络：首次启动需联网下载语音模型（关键！缺失会报 SecurityException: missing INTERNET permission） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 前台服务 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
