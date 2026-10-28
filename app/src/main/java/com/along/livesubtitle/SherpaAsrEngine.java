@@ -244,44 +244,43 @@ public class SherpaAsrEngine implements AsrEngine {
         Log.i(TAG, "model download finished");
     }
 
-    /** 单文件下载，startAt>0 时用 Range 续传 */
-    private void downloadOne(String urlStr, File dest, long startAt) throws Exception {
+    /** 宽松 SSL 上下文（仅用于下载公开模型文件，不涉及任何账号凭据） */
+    private static javax.net.ssl.SSLSocketFactory LENIENT_FACTORY;
+    private static javax.net.ssl.HostnameVerifier LENIENT_HOSTS;
+
+    private static synchronized void initLenientSsl() {
+        if (LENIENT_FACTORY != null) return;
         try {
-            downloadOneInner(urlStr, dest, startAt);
-        } catch (javax.net.ssl.SSLException se) {
-            // 镜像站证书链在部分机型不被信任，降级为宽松校验重试一次。
-            // 这里只下载公开模型文件，不涉及账号凭据，风险可控。
-            Log.w(TAG, "SSL error, retry with lenient trust: " + se.getMessage());
-            downloadOneLenient(urlStr, dest, startAt);
+            javax.net.ssl.TrustManager[] trustAll = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                                                       String authType) {
+                        }
+
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                                                       String authType) {
+                        }
+
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+                    }
+            };
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+            sc.init(null, trustAll, new java.security.SecureRandom());
+            LENIENT_FACTORY = sc.getSocketFactory();
+            LENIENT_HOSTS = new javax.net.ssl.HostnameVerifier() {
+                public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                    return true;
+                }
+            };
+        } catch (Throwable e) {
+            Log.e(TAG, "initLenientSsl failed: " + e.getMessage());
         }
     }
 
-    /** 使用宽松 SSL 上下文下载（信任所有证书） */
-    private void downloadOneLenient(String urlStr, File dest, long startAt) throws Exception {
-        javax.net.ssl.TrustManager[] trustAll = new javax.net.ssl.TrustManager[]{
-                new javax.net.ssl.X509TrustManager() {
-                    public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
-                                                   String authType) {
-                    }
-
-                    public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
-                                                   String authType) {
-                    }
-
-                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                        return new java.security.cert.X509Certificate[0];
-                    }
-                }
-        };
-        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
-        sc.init(null, trustAll, new java.security.SecureRandom());
-        javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-        javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(
-                new javax.net.ssl.HostnameVerifier() {
-                    public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
-                        return true;
-                    }
-                });
+    /** 单文件下载，startAt>0 时用 Range 续传 */
+    private void downloadOne(String urlStr, File dest, long startAt) throws Exception {
         downloadOneInner(urlStr, dest, startAt);
     }
 
@@ -293,10 +292,23 @@ public class SherpaAsrEngine implements AsrEngine {
         try {
             java.net.URL url = new java.net.URL(urlStr);
             conn = (java.net.HttpURLConnection) url.openConnection();
+            // 逐连接设置宽松 SSL，避免污染全局 HTTPS 栈
+            if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                initLenientSsl();
+                javax.net.ssl.HttpsURLConnection https =
+                        (javax.net.ssl.HttpsURLConnection) conn;
+                if (LENIENT_FACTORY != null) {
+                    https.setSSLSocketFactory(LENIENT_FACTORY);
+                }
+                if (LENIENT_HOSTS != null) {
+                    https.setHostnameVerifier(LENIENT_HOSTS);
+                }
+            }
             conn.setConnectTimeout(20000);
             conn.setReadTimeout(60000);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "LiveSubtitle/1.0");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) LiveSubtitle/1.0");
+            conn.setRequestProperty("Accept", "*/*");
             if (startAt > 0) {
                 conn.setRequestProperty("Range", "bytes=" + startAt + "-");
             }
