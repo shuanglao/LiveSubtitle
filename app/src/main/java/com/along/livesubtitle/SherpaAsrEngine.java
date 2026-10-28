@@ -202,8 +202,28 @@ public class SherpaAsrEngine implements AsrEngine {
             "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/"
     };
 
+    /** 统一下载日志：写入 filesDir/dllog.txt，App 侧 logcat 常被系统限制，只能靠自己落盘 */
+    private void logf(String msg) {
+        Log.i(TAG, msg);
+        try {
+            java.io.File lf = new java.io.File(context.getFilesDir(), "dllog.txt");
+            // 超过 256KB 就清空，避免无限增长
+            if (lf.exists() && lf.length() > 256 * 1024) {
+                //noinspection ResultOfMethodCallIgnored
+                lf.delete();
+            }
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(lf, true);
+            fos.write((new java.util.Date().toString() + "  " + msg + "\n").getBytes("UTF-8"));
+            fos.flush();
+            fos.close();
+        } catch (Throwable ignore) {
+        }
+    }
+
     /** 逐个下载模型文件，已存在且有效的跳过，支持断点续传 */
     private void downloadModel(File target) throws Exception {
+        logf("=== downloadModel start, dir=" + target.getAbsolutePath()
+                + ", sources=" + MODEL_BASE_URLS.length);
         String[] names = new String[]{ENCODER, DECODER, JOINER, TOKENS};
         for (int i = 0; i < names.length; i++) {
             String name = names[i];
@@ -218,12 +238,17 @@ public class SherpaAsrEngine implements AsrEngine {
             boolean ok = false;
             for (int u = 0; u < MODEL_BASE_URLS.length; u++) {
                 String base = MODEL_BASE_URLS[u];
+                logf("try [" + (u + 1) + "/" + MODEL_BASE_URLS.length + "] " + name
+                        + " resume@" + (part.exists() ? part.length() : 0L) + " from " + base);
                 try {
                     long at = part.exists() ? part.length() : 0L;
                     downloadOne(base + name, part, at);
                     if (part.exists() && part.length() > 1024) {
                         ok = true;
+                        logf("ok " + name + " bytes=" + part.length());
                         break;
+                    } else {
+                        logf("empty " + name + " bytes=" + (part.exists() ? part.length() : 0L));
                     }
                 } catch (Exception e) {
                     lastErr = e;
@@ -331,6 +356,8 @@ public class SherpaAsrEngine implements AsrEngine {
             }
             int code = conn.getResponseCode();
             String ctype = conn.getContentType();
+            logf("resp code=" + code + " type=" + ctype
+                    + " len=" + conn.getContentLengthLong() + " url=" + urlStr);
             if (ctype != null && ctype.toLowerCase().contains("text/html")) {
                 // 镜像站失效时常返回 200 + 空 HTML 页，必须当作失败，否则会误判成功
                 throw new java.io.IOException("bad mirror (html) " + urlStr);
