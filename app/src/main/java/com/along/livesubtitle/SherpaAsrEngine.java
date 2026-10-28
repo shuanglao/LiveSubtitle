@@ -193,8 +193,12 @@ public class SherpaAsrEngine implements AsrEngine {
      * 官方地址放在最后作为海外网络环境下的兜底。
      */
     private static final String[] MODEL_BASE_URLS = new String[]{
-            "https://hf-mirror.com/csukuangfj/" + MODEL_DIR + "/resolve/main/",
-            "http://hf-mirror.com/csukuangfj/" + MODEL_DIR + "/resolve/main/",
+            // Modelscope 国内直连，实测 1.2MB/s 且支持 Range 续传（当前主源）
+            "https://www.modelscope.cn/models/pkufool/" + MODEL_DIR + "/resolve/master/",
+            // Modelscope 备用 API 形式
+            "https://www.modelscope.cn/api/v1/models/pkufool/" + MODEL_DIR
+                    + "/repo?Revision=master&FilePath=",
+            // 海外网络环境兜底
             "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/"
     };
 
@@ -223,8 +227,21 @@ public class SherpaAsrEngine implements AsrEngine {
                     }
                 } catch (Exception e) {
                     lastErr = e;
-                    Log.e(TAG, "download failed from " + base + " : " + e.getMessage());
-                    emitStatus("\u6e90\u4e0d\u53ef\u7528\uff0c\u5c1d\u8bd5\u5907\u7528\u6e90\u2026");
+                    String why = e.getClass().getSimpleName() + ": " + e.getMessage();
+                    Log.e(TAG, "download failed from " + base + " : " + why);
+                    // 把真实失败原因落到文件，便于排查（App 侧 logcat 常被系统限制）
+                    try {
+                        java.io.File ef = new java.io.File(target.getParentFile(), "dl_err.txt");
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(ef, true);
+                        fos.write((new java.util.Date().toString() + " [" + (u + 1) + "/"
+                                + MODEL_BASE_URLS.length + "] " + base + "\n  " + why + "\n").getBytes("UTF-8"));
+                        fos.flush();
+                        fos.close();
+                    } catch (Throwable ignore) {
+                    }
+                    String shortWhy = why.length() > 26 ? why.substring(0, 26) : why;
+                    emitStatus("\u5931\u8d25" + (u + 1) + "/" + MODEL_BASE_URLS.length
+                            + "\uff1a" + shortWhy);
                 }
             }
             if (!ok) {
@@ -313,6 +330,11 @@ public class SherpaAsrEngine implements AsrEngine {
                 conn.setRequestProperty("Range", "bytes=" + startAt + "-");
             }
             int code = conn.getResponseCode();
+            String ctype = conn.getContentType();
+            if (ctype != null && ctype.toLowerCase().contains("text/html")) {
+                // 镜像站失效时常返回 200 + 空 HTML 页，必须当作失败，否则会误判成功
+                throw new java.io.IOException("bad mirror (html) " + urlStr);
+            }
             if (code == 206) {
                 os = new FileOutputStream(dest, true);
             } else if (code == 200) {
