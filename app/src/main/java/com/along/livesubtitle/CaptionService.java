@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
@@ -37,8 +38,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     private Prefs prefs;
     private CaptionWindow window;
     private AsrEngine engine;
-
     private boolean running = false;
+    /** 记录上一个是否是「真实用户触发」的 START；用于识别 START_STICKY 僵尸重启 */
+    private boolean userStarted = false;
 
     // ============================================================
     //  生命周期
@@ -51,21 +53,27 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         createChannel();
     }
 
-    @Override
+@Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        String action = intent == null ? ACTION_START : intent.getAction();
-        if (action == null) action = ACTION_START;
-
-        if (ACTION_STOP.equals(action)) {
+        // 关键修复：intent == null 表示系统按 START_STICKY 自动拉起（僵尸重启）
+        // 此时 App 已无前台组件，startForeground 必被 DENIED，强启只会再次被杀形成螺旋
+        // 因此直接 stopSelf() 打断螺旋，等用户下次在 App 内真正点「开始」再走完整链路
+        if (intent == null) {
+            logf("sticky restart (intent=null), stopSelf to break death loop");
             stopSelf();
             return START_NOT_STICKY;
         }
-
+        String action = intent.getAction();
+        if (action == null) action = ACTION_START;
+        if (ACTION_STOP.equals(action)) {
+            userStarted = false;
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (ACTION_REFRESH_STYLE.equals(action)) {
             if (window != null && window.isShowing()) window.refreshStyle();
             return START_STICKY;
         }
-
         if (ACTION_TOGGLE_LOCK.equals(action)) {
             if (window != null && window.isShowing()) {
                 boolean next = !window.isLocked();
@@ -75,8 +83,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             }
             return START_STICKY;
         }
-
-        // ACTION_START
+        // ACTION_START：真实用户触发
+        userStarted = true;
         startForegroundSafe();
         if (!running) {
             startCaption();
@@ -244,14 +252,20 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     private void startForegroundSafe() {
         try {
-            startForeground(NOTI_ID, buildNotification(false));
-            logf("startForeground OK type=microphone");
+            Notification n = buildNotification(false);
+            if (Build.VERSION.SDK_INT >= 29) {
+                // Android 10+：显式声明 microphone 类型，避免系统因类型不匹配拒授 FGS 身份
+                startForeground(NOTI_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+            } else {
+                startForeground(NOTI_ID, n);
+            }
+            logf("startForeground OK type=microphone (explicit)");
         } catch (Throwable t) {
             logf("startForeground FAILED: " + Log.getStackTraceString(t));
             try {
                 Notification n = buildNotification(false);
                 startForeground(NOTI_ID, n);
-                logf("startForeground retry OK");
+                logf("startForeground retry OK (2-arg)");
             } catch (Throwable t2) {
                 logf("startForeground retry FAILED: " + Log.getStackTraceString(t2));
             }
