@@ -60,6 +60,7 @@ public class CaptionWindow {
     private TextView tvBody;        // 临时（正在说）的文字
     private LinearLayout barTop;
     private TextView tvLockBtn;
+    private TextView dragIcon;
     private View handle;
 
     private WindowManager.LayoutParams lp;
@@ -162,15 +163,15 @@ public class CaptionWindow {
         boxCard.addView(barTop, barLp);
 
         // 拖动手柄（⋮⋮ 样式）
-        TextView drag = new TextView(ctx);
-        drag.setText("⠿");
-        drag.setTextSize(16f);
-        drag.setTextColor(0xFFB0B0B0);
-        drag.setPadding(dp(4), 0, dp(8), 0);
+        dragIcon = new TextView(ctx);
+        dragIcon.setText("⠿");
+        dragIcon.setTextSize(16f);
+        dragIcon.setTextColor(0xFFB0B0B0);
+        dragIcon.setPadding(dp(4), 0, dp(8), 0);
         LinearLayout.LayoutParams dragLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        barTop.addView(drag, dragLp);
+        barTop.addView(dragIcon, dragLp);
 
         // 中间弹性空白
         View spacer = new View(ctx);
@@ -278,7 +279,7 @@ public class CaptionWindow {
                 return false;
             }
         };
-        drag.setOnTouchListener(dragTouch);
+        dragIcon.setOnTouchListener(dragTouch);
         barTop.setOnTouchListener(dragTouch);
 
         // 右下角缩放
@@ -416,8 +417,10 @@ public class CaptionWindow {
             tvLockBtn.setTextColor(v ? 0xFF9A9A9A : 0xFF0E5F5C);
             tvLockBtn.setBackground(makePill(v ? 0xFFEEEEEE : 0xFFD6EDEC));
         }
-        if (barTop != null) {
-            barTop.setVisibility(v ? View.GONE : View.VISIBLE);
+        // 锁定时只隐藏拖动手柄和缩放手柄，锁定/关闭按钮保持可见，
+        // 保证任何时候都能从屏幕上点回“解锁”（避免锁死后找不到出口）
+        if (dragIcon != null) {
+            dragIcon.setVisibility(v ? View.GONE : View.VISIBLE);
         }
         if (handle != null) {
             handle.setVisibility(v ? View.GONE : View.VISIBLE);

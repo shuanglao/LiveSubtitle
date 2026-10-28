@@ -29,6 +29,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     public static final String ACTION_TOGGLE_LOCK = "com.along.livesubtitle.TOGGLE_LOCK";
 
     private static final String CHANNEL_ID = "live_subtitle";
+    /** PendingIntent 不可变标志（Android 12+ 必需，否则点击无响应） */
+    private static final int PI_IMMUTABLE = 0x04000000;
     private static final int NOTI_ID = 1001;
 
     private Prefs prefs;
@@ -242,17 +244,17 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         Intent open = new Intent(this, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent piOpen = PendingIntent.getActivity(
-                this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT);
+                this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
 
         Intent lock = new Intent(this, CaptionService.class);
         lock.setAction(ACTION_TOGGLE_LOCK);
         PendingIntent piLock = PendingIntent.getService(
-                this, 1, lock, PendingIntent.FLAG_UPDATE_CURRENT);
+                this, 1, lock, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
 
         Intent stop = new Intent(this, CaptionService.class);
         stop.setAction(ACTION_STOP);
         PendingIntent piStop = PendingIntent.getService(
-                this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT);
+                this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
 
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
