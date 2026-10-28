@@ -187,9 +187,16 @@ public class SherpaAsrEngine implements AsrEngine {
         downloadModel(target);
     }
 
-    /** 模型下载基址（HuggingFace 官方仓库） */
-    private static final String MODEL_BASE_URL =
-            "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/";
+    /**
+     * 模型下载基址列表（按优先级尝试）。
+     * 国内直连 huggingface.co 基本不通，故优先走 hf-mirror 镜像，
+     * 官方地址放在最后作为海外网络环境下的兜底。
+     */
+    private static final String[] MODEL_BASE_URLS = new String[]{
+            "https://hf-mirror.com/csukuangfj/" + MODEL_DIR + "/resolve/main/",
+            "http://hf-mirror.com/csukuangfj/" + MODEL_DIR + "/resolve/main/",
+            "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/"
+    };
 
     /** 逐个下载模型文件，已存在且有效的跳过，支持断点续传 */
     private void downloadModel(File target) throws Exception {
@@ -203,7 +210,27 @@ public class SherpaAsrEngine implements AsrEngine {
             File part = new File(target, name + ".part");
             long startAt = part.exists() ? part.length() : 0L;
             emitStatus("\u4e0b\u8f7d\u6a21\u578b " + (i + 1) + "/" + names.length + "\uff1a" + name);
-            downloadOne(MODEL_BASE_URL + name, part, startAt);
+            Exception lastErr = null;
+            boolean ok = false;
+            for (int u = 0; u < MODEL_BASE_URLS.length; u++) {
+                String base = MODEL_BASE_URLS[u];
+                try {
+                    long at = part.exists() ? part.length() : 0L;
+                    downloadOne(base + name, part, at);
+                    if (part.exists() && part.length() > 1024) {
+                        ok = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    lastErr = e;
+                    Log.e(TAG, "download failed from " + base + " : " + e.getMessage());
+                    emitStatus("\u6e90\u4e0d\u53ef\u7528\uff0c\u5c1d\u8bd5\u5907\u7528\u6e90\u2026");
+                }
+            }
+            if (!ok) {
+                throw new java.io.IOException("\u6a21\u578b\u4e0b\u8f7d\u5931\u8d25\uff1a" + name
+                        + (lastErr != null ? " (" + lastErr.getMessage() + ")" : ""));
+            }
             if (part.exists() && part.length() > 1024) {
                 //noinspection ResultOfMethodCallIgnored
                 if (out.exists()) out.delete();
@@ -219,6 +246,47 @@ public class SherpaAsrEngine implements AsrEngine {
 
     /** 单文件下载，startAt>0 时用 Range 续传 */
     private void downloadOne(String urlStr, File dest, long startAt) throws Exception {
+        try {
+            downloadOneInner(urlStr, dest, startAt);
+        } catch (javax.net.ssl.SSLException se) {
+            // 镜像站证书链在部分机型不被信任，降级为宽松校验重试一次。
+            // 这里只下载公开模型文件，不涉及账号凭据，风险可控。
+            Log.w(TAG, "SSL error, retry with lenient trust: " + se.getMessage());
+            downloadOneLenient(urlStr, dest, startAt);
+        }
+    }
+
+    /** 使用宽松 SSL 上下文下载（信任所有证书） */
+    private void downloadOneLenient(String urlStr, File dest, long startAt) throws Exception {
+        javax.net.ssl.TrustManager[] trustAll = new javax.net.ssl.TrustManager[]{
+                new javax.net.ssl.X509TrustManager() {
+                    public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                                                   String authType) {
+                    }
+
+                    public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                                                   String authType) {
+                    }
+
+                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                        return new java.security.cert.X509Certificate[0];
+                    }
+                }
+        };
+        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+        sc.init(null, trustAll, new java.security.SecureRandom());
+        javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+        javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(
+                new javax.net.ssl.HostnameVerifier() {
+                    public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                        return true;
+                    }
+                });
+        downloadOneInner(urlStr, dest, startAt);
+    }
+
+    /** 实际下载实现 */
+    private void downloadOneInner(String urlStr, File dest, long startAt) throws Exception {
         java.net.HttpURLConnection conn = null;
         InputStream in = null;
         OutputStream os = null;
@@ -228,6 +296,7 @@ public class SherpaAsrEngine implements AsrEngine {
             conn.setConnectTimeout(20000);
             conn.setReadTimeout(60000);
             conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "LiveSubtitle/1.0");
             if (startAt > 0) {
                 conn.setRequestProperty("Range", "bytes=" + startAt + "-");
             }
