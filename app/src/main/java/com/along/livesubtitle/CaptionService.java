@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 import android.widget.Toast;
 
 /**
@@ -101,20 +102,34 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     private void startCaption() {
         running = true;
-
+        logf("startCaption enter");
         // 1) 悬浮窗
-        if (window == null) {
-            window = new CaptionWindow(this, prefs);
-            window.setListener(this);
+        try {
+            if (window == null) {
+                window = new CaptionWindow(this, prefs);
+                window.setListener(this);
+            }
+            window.setInitialLocked(prefs.isLockedRemembered());
+            window.show();
+            logf("CaptionWindow show OK");
+        } catch (Throwable t) {
+            logf("CaptionWindow FAILED: " + Log.getStackTraceString(t));
+            toast("悬浮窗显示失败：" + t.getClass().getSimpleName());
         }
-        window.setInitialLocked(prefs.isLockedRemembered());
-        window.show();
-
         // 2) 引擎
-        startEngine();
-
+        try {
+            startEngine();
+            logf("startEngine OK");
+        } catch (Throwable t) {
+            logf("startEngine FAILED: " + Log.getStackTraceString(t));
+        }
         prefs.setEnabled(true);
-        updateNotification(window.isLocked());
+        try {
+            updateNotification(window != null && window.isLocked());
+        } catch (Throwable t) {
+            logf("updateNotification FAILED: " + Log.getStackTraceString(t));
+        }
+        logf("startCaption done");
     }
 
     private void startEngine() {
@@ -222,12 +237,31 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     private void startForegroundSafe() {
         try {
             startForeground(NOTI_ID, buildNotification(false));
+            logf("startForeground OK type=microphone");
         } catch (Throwable t) {
+            logf("startForeground FAILED: " + Log.getStackTraceString(t));
             try {
                 Notification n = buildNotification(false);
                 startForeground(NOTI_ID, n);
-            } catch (Throwable ignore) {
+                logf("startForeground retry OK");
+            } catch (Throwable t2) {
+                logf("startForeground retry FAILED: " + Log.getStackTraceString(t2));
             }
+        }
+    }
+
+    /** 服务侧取证日志：写 files/svc.log，超 256KB 自动清空 */
+    private void logf(String msg) {
+        String line = android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis())
+                + " " + msg + "\n";
+        Log.i("LiveSubtitleSvc", msg);
+        try {
+            java.io.File f = new java.io.File(getFilesDir(), "svc.log");
+            if (f.exists() && f.length() > 256 * 1024) f.delete();
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
+            fos.write(line.getBytes("UTF-8"));
+            fos.close();
+        } catch (Throwable ignore) {
         }
     }
 
