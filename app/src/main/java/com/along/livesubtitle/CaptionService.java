@@ -105,7 +105,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     @Override
     public void onDestroy() {
         stopCaption();
-        prefs.setEnabled(false);
+        // 注意：只有用户主动 ACTION_STOP 才把 enabled 置 false（在 onStartCommand 里已处理）
+        // 系统回收/崩溃导致的 onDestroy 不能清标记，否则重启后不会自动恢复
+        logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ")");
         super.onDestroy();
     }
 
@@ -119,6 +121,11 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     // ============================================================
 
     private void startCaption() {
+        // 幂等守卫：窗口已在显示且引擎已起，直接返回，避免反复重建窗口
+        if (running && window != null && window.isShowing()) {
+            logf("startCaption SKIP (already running & showing)");
+            return;
+        }
         running = true;
         logf("startCaption enter");
         // 1) 悬浮窗

@@ -110,6 +110,32 @@ public class CaptionWindow {
         DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
         screenW = dm.widthPixels;
         screenH = dm.heightPixels;
+        // 兜底：Service 里 getDisplayMetrics 可能是 0，改用真实屏幕尺寸
+        // 全程反射，不依赖编译期 API（规避老 android.jar 未知方法问题）
+        if (screenW <= 0 || screenH <= 0) {
+            try {
+                Object disp = wm.getClass().getMethod("getDefaultDisplay").invoke(wm);
+                DisplayMetrics rm = new DisplayMetrics();
+                disp.getClass().getMethod("getRealMetrics", DisplayMetrics.class).invoke(disp, rm);
+                if (rm.widthPixels > 0) screenW = rm.widthPixels;
+                if (rm.heightPixels > 0) screenH = rm.heightPixels;
+            } catch (Throwable ignore) {
+            }
+        }
+        if (screenW <= 0 || screenH <= 0) {
+            try {
+                Object wmx = wm.getClass().getMethod("getMaximumWindowMetrics").invoke(wm);
+                Object bounds = wmx.getClass().getMethod("getBounds").invoke(wmx);
+                int bw = ((android.graphics.Rect) bounds).width();
+                int bh = ((android.graphics.Rect) bounds).height();
+                if (bw > 0) screenW = bw;
+                if (bh > 0) screenH = bh;
+            } catch (Throwable ignore) {
+            }
+        }
+        if (screenW <= 0) screenW = 1080;
+        if (screenH <= 0) screenH = 1920;
+        wlog("ctor screen=" + screenW + "x" + screenH + " density=" + dm.density);
     }
 
     public void setListener(Listener l) {
@@ -377,10 +403,25 @@ public class CaptionWindow {
                 PixelFormat.TRANSLUCENT);
         p.gravity = Gravity.TOP | Gravity.LEFT;
 
-        // 尺寸
+        // 尺寸（全部做兜底，杜绝 0 或负数导致窗口隐形）
         int wDp = prefs.getWindowWidthDp();
-        p.width = wDp > 0 ? dp(wDp) : (screenW - dp(24));
-        p.height = dp(prefs.getWindowHeightDp());
+        int hDp = prefs.getWindowHeightDp();
+        int wPx = wDp > 0 ? dp(wDp) : (screenW - dp(24));
+        int hPx = hDp > 0 ? dp(hDp) : dp(160);
+        if (wPx <= 0) wPx = (int) (screenW * 0.9f);
+        if (wPx <= 0) wPx = 900;
+        if (hPx <= 0) hPx = dp(160);
+        if (hPx <= 0) hPx = 480;
+        if (wPx > screenW) wPx = screenW;
+        if (hPx > screenH) hPx = screenH;
+        p.width = wPx;
+        p.height = hPx;
+        if (p.width <= 0 || p.height <= 0) {
+            p.width = 900;
+            p.height = 480;
+        }
+        wlog("buildLp size wDp=" + wDp + " hDp=" + hDp + " -> w=" + p.width + " h=" + p.height
+                + " screen=" + screenW + "x" + screenH);
 
         // 位置
         int sx = prefs.getWindowX();
@@ -588,6 +629,19 @@ public class CaptionWindow {
     }
 
     private int dp(float v) {
-        return Math.round(v * ctx.getResources().getDisplayMetrics().density);
+        float d = 0f;
+        try {
+            d = ctx.getResources().getDisplayMetrics().density;
+        } catch (Throwable ignore) {
+        }
+        if (d <= 0f) {
+            // density 拿不到（Service 上下文偶发），按 3.0 兜底，避免所有尺寸归零
+            try {
+                d = ctx.getResources().getDisplayMetrics().densityDpi / 160f;
+            } catch (Throwable ignore) {
+            }
+        }
+        if (d <= 0f) d = 3.0f;
+        return Math.round(v * d);
     }
 }
