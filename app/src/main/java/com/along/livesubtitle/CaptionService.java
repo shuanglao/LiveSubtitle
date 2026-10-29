@@ -53,7 +53,6 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         createChannel();
     }
 
-@Override
     // 硬闸：sticky 自动重启每个进程生命周期内最多重建一次，防止 1~2 秒一轮的死螺旋
     private static boolean stickyRebuilt = false;
 
