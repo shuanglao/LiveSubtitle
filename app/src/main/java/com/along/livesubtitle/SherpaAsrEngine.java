@@ -500,7 +500,7 @@ public class SherpaAsrEngine implements AsrEngine {
         modelConfig.setTokens(modelDir + "/" + TOKENS);
         modelConfig.setModelType("zipformer");
         modelConfig.setNumThreads(2);
-        modelConfig.setDebug(false);
+        modelConfig.setDebug(true);       // 开 native 详细日志
         modelConfig.setProvider("cpu");
 
         EndpointRule rule1 = new EndpointRule(false, 2.4f, 0f);
@@ -512,7 +512,11 @@ public class SherpaAsrEngine implements AsrEngine {
         endpointConfig.setRule3(rule3);
 
         OnlineRecognizerConfig config = new OnlineRecognizerConfig();
-        config.setFeatConfig(new FeatureConfig());
+        FeatureConfig featConfig = new FeatureConfig();
+        featConfig.setSampleRate(SAMPLE_RATE);
+        featConfig.setFeatureDim(80);
+        featConfig.setDither(0.0f);
+        config.setFeatConfig(featConfig);
         config.setModelConfig(modelConfig);
         config.setEndpointConfig(endpointConfig);
         config.setEnableEndpoint(true);
