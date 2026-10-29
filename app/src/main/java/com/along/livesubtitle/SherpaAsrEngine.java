@@ -113,9 +113,12 @@ public class SherpaAsrEngine implements AsrEngine {
 
     private void doWork() {
         try {
+            logf("doWork enter ready=" + ready);
             if (!ready) {
                 try {
+                    logf("ensureModel BEGIN");
                     ensureModel();
+                    logf("ensureModel OK");
                 } catch (Throwable e) {
                     Log.e(TAG, "ensureModel error", e);
                     emitError(ERR_MODEL, "模型准备失败：" + e.getMessage());
@@ -123,7 +126,9 @@ public class SherpaAsrEngine implements AsrEngine {
                     return;
                 }
                 try {
+                    logf("initRecognizer BEGIN");
                     initRecognizer();
+                    logf("initRecognizer OK");
                 } catch (Throwable e) {
                     Log.e(TAG, "initRecognizer error", e);
                     emitError(ERR_MODEL, "识别器初始化失败：" + e.getMessage());
@@ -474,6 +479,7 @@ public class SherpaAsrEngine implements AsrEngine {
      * createStream 只有带参重载，传 "" 即默认。
      */
     private void initRecognizer() {
+        logf("[init] calling System.loadLibrary(sherpa-onnx-jni) via OnlineRecognizer...");
         String modelDir = new File(context.getFilesDir(), MODEL_DIR).getAbsolutePath();
 
         OnlineTransducerModelConfig transducer = new OnlineTransducerModelConfig();
@@ -504,8 +510,11 @@ public class SherpaAsrEngine implements AsrEngine {
         config.setEnableEndpoint(true);
         config.setDecodingMethod("greedy_search");
 
+                logf("[init] new OnlineRecognizer ...");
         recognizer = new OnlineRecognizer(context.getAssets(), config);
+        logf("[init] new OnlineRecognizer OK");
         stream = recognizer.createStream("");
+        logf("[init] createStream OK");
         Log.i(TAG, "recognizer ready, modelDir=" + modelDir);
     }
 
