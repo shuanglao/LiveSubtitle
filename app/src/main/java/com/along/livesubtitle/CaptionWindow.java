@@ -164,9 +164,21 @@ public class CaptionWindow {
         try {
             wm.addView(root, lp);
             added = true;
+            // 注意：addView 之后 View 还未 measure/layout，此处 getWidth/getHeight 必为 0，
+            // 不能当作「窗口尺寸为0」的证据（之前就是被这条日志误导的）。
+            // 真正尺寸必须在下一帧 post 之后再取。
             wlog("show() addView SUCCESS, root.parent=" + (root.getParent() != null)
                     + " visibility=" + root.getVisibility()
-                    + " w=" + root.getWidth() + " h=" + root.getHeight());
+                    + " (size pending, will log next frame)");
+            root.post(new Runnable() {
+                @Override
+                public void run() {
+                    wlog("show() measured after layout: w=" + root.getWidth()
+                            + " h=" + root.getHeight()
+                            + " visibility=" + root.getVisibility()
+                            + " attached=" + (root.getParent() != null));
+                }
+            });
             applyLockedState(locked, false);
             refreshStyle();
         } catch (Throwable t) {

@@ -54,6 +54,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     }
 
 @Override
+    // 硬闸：sticky 自动重启每个进程生命周期内最多重建一次，防止 1~2 秒一轮的死螺旋
+    private static boolean stickyRebuilt = false;
+
+    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 关键修复：intent == null 表示系统按 START_STICKY 自动拉起（僵尸重启）
         // 此时 App 已无前台组件，startForeground 必被 DENIED，强启只会再次被杀形成螺旋
@@ -63,15 +67,24 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             // 旧逻辑 stopSelf 会永久停止，导致「窗口消失且永不恢复」。
             // 新逻辑：若用户此前开启了字幕（prefs.isEnabled），则重建前台通知 + 窗口 + 引擎。
             boolean want = prefs.isEnabled();
-            logf("sticky restart (intent=null), wantEnabled=" + want);
+            logf("sticky restart (intent=null), wantEnabled=" + want + ", stickyRebuilt=" + stickyRebuilt);
             if (!want) {
                 logf("user stopped, stopSelf");
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            if (stickyRebuilt) {
+                // 本进程已经自动重建过一轮，再次被拉起说明前面那轮没活下来，
+                // 继续重建只会形成 1~2 秒一轮的死螺旋（会把整个 App 弹出去），直接收手。
+                logf("sticky restart ABORT (already rebuilt once this process), stopSelf");
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            stickyRebuilt = true;
             startForegroundSafe();
             if (!running) startCaption();
-            return START_STICKY;
+            // 一次性：不再自续，避免被杀后无限拉起
+            return START_NOT_STICKY;
         }
         String action = intent.getAction();
         if (action == null) action = ACTION_START;
