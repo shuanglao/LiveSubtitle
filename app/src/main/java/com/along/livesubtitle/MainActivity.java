@@ -34,6 +34,10 @@ public class MainActivity extends Activity {
     private static final int C_SUB = 0xFF7A8B89;
 
     private static final int REQ_AUDIO = 100;
+    /** 用户明确表达了“我要开始字幕”的意图，等权限回来后续启。
+     *  用独立标志位而不是 !prefs.isEnabled() 判断，避免与 toggleCaption()
+     *  内部的启停分支互相竞态，误走停止分支把自己的 enabled 抹掉。 */
+    private boolean pendingStart = false;
     private static final String NL = String.valueOf((char) 10);
 
     private Prefs prefs;
@@ -299,11 +303,15 @@ public class MainActivity extends Activity {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "录音权限已授予", Toast.LENGTH_SHORT).show();
                 // 授权成功后自动继续启动字幕，免用户再点一次
-                if (!prefs.isEnabled()) {
+                // 关键：只看 pendingStart，绝不能再拿 !prefs.isEnabled() 判断。
+                // 否则 200ms 窗口期内 enabled 一旦变 true，toggleCaption()
+                // 就会走进“停止”分支，把自己刚开的服务关掉 -> 启动即死循环。
+                if (pendingStart) {
+                    pendingStart = false;
                     btnToggle.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            toggleCaption();
+                            if (!prefs.isEnabled()) toggleCaption();
                         }
                     }, 200);
                 }
@@ -334,11 +342,13 @@ public class MainActivity extends Activity {
                 } catch (Throwable t) {
                     Toast.makeText(this, "请到系统设置中手动开启悬浮窗权限", Toast.LENGTH_LONG).show();
                 }
+                pendingStart = true;
                 return;
             }
             if (!canRecord()) {
                 Toast.makeText(this, "请在弹出的系统框中点「允许」录音权限", Toast.LENGTH_LONG).show();
                 requestAudioPermission();
+                pendingStart = true;
                 return;
             }
             svc.setAction(CaptionService.ACTION_START);

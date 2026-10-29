@@ -20,7 +20,10 @@ public class Prefs {
     }
 
     public void setEnabled(boolean v) {
-        sp.edit().putBoolean("enabled", v).apply();
+        // 关键：必须用 commit() 同步落盘。
+        // 之前用 apply() 异步写，服务起来后立刻被系统杀掉，
+        // 异步写盘来不及完成 → 重启后读到旧值 → 服务自杀 → 死螺旋。
+        sp.edit().putBoolean("enabled", v).commit();
     }
 
     // ---------- 音频模式 ----------

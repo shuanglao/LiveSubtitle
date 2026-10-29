@@ -41,6 +41,7 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     private boolean running = false;
     /** 记录上一个是否是「真实用户触发」的 START；用于识别 START_STICKY 僵尸重启 */
     private boolean userStarted = false;
+    private long aliveAt = System.currentTimeMillis();
 
     // ============================================================
     //  生命周期
@@ -51,6 +52,31 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         super.onCreate();
         prefs = new Prefs(this);
         createChannel();
+        installCrashHandler();
+        logf("onCreate DONE pid=" + android.os.Process.myPid() + " enabled=" + prefs.isEnabled());
+    }
+
+    /** 崩溃取证：把未捕获异常写进 files/crash.log。本机 logcat 读不到，只能自己落盘。 */
+    private void installCrashHandler() {
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    String txt = android.text.format.DateFormat.format("MM-dd HH:mm:ss", System.currentTimeMillis())
+                            + " THREAD=" + t.getName() + "\n"
+                            + Log.getStackTraceString(e) + "\n\n";
+                    java.io.File f = new java.io.File(getFilesDir(), "crash.log");
+                    if (f.exists() && f.length() > 512 * 1024) f.delete();
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
+                    fos.write(txt.getBytes("UTF-8"));
+                    fos.flush();
+                    fos.close();
+                } catch (Throwable ignore) {
+                }
+                if (prev != null) prev.uncaughtException(t, e);
+            }
+        });
     }
 
     // 硬闸：sticky 自动重启每个进程生命周期内最多重建一次，防止 1~2 秒一轮的死螺旋
@@ -119,7 +145,7 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         stopCaption();
         // 注意：只有用户主动 ACTION_STOP 才把 enabled 置 false（在 onStartCommand 里已处理）
         // 系统回收/崩溃导致的 onDestroy 不能清标记，否则重启后不会自动恢复
-        logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ")");
+        logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ", running=" + running + ", stickyRebuilt=" + stickyRebuilt + ", pid=" + android.os.Process.myPid() + ", aliveMs=" + (System.currentTimeMillis() - aliveAt) + ")");
         super.onDestroy();
     }
 
@@ -139,7 +165,11 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             return;
         }
         running = true;
-        logf("startCaption enter");
+        // 提前落盘：只要决定开字幕，立刻把 enabled 写成 true。
+        // 之前写在 startEngine 之后，引擎一抛异常这行就可能被跳过，
+        // 造成“窗口开了但 enabled=false”的不一致状态。
+        prefs.setEnabled(true);
+        logf("startCaption enter (enabled=true committed)");
         // 1) 悬浮窗
         try {
             if (window == null) {
@@ -165,7 +195,6 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         } catch (Throwable t) {
             logf("startEngine FAILED: " + Log.getStackTraceString(t));
         }
-        prefs.setEnabled(true);
         try {
             updateNotification(window != null && window.isLocked());
         } catch (Throwable t) {
@@ -227,6 +256,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     private void stopCaption() {
         running = false;
+        // 清脏状态：字幕都停了，用户启动意图必须归零。
+        // 否则 onDestroy 可能读到上一次遗留的 true/false 不一致状态，
+        // 导致 sticky 重建时的判断失准。
+        userStarted = false;
         stopEngine();
         if (window != null) {
             window.hide();
