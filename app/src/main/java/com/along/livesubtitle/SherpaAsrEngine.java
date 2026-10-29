@@ -479,7 +479,15 @@ public class SherpaAsrEngine implements AsrEngine {
      * createStream 只有带参重载，传 "" 即默认。
      */
     private void initRecognizer() {
-        logf("[init] calling System.loadLibrary(sherpa-onnx-jni) via OnlineRecognizer...");
+        logf("[init] step1 System.loadLibrary(sherpa-onnx-jni)");
+        try {
+            System.loadLibrary("sherpa-onnx-jni");
+            logf("[init] step1 loadLibrary OK");
+        } catch (Throwable t) {
+            logf("[init] step1 loadLibrary FAILED: " + t);
+            throw new RuntimeException("loadLibrary failed", t);
+        }
+        logf("[init] step2 build configs");
         String modelDir = new File(context.getFilesDir(), MODEL_DIR).getAbsolutePath();
 
         OnlineTransducerModelConfig transducer = new OnlineTransducerModelConfig();
@@ -510,9 +518,11 @@ public class SherpaAsrEngine implements AsrEngine {
         config.setEnableEndpoint(true);
         config.setDecodingMethod("greedy_search");
 
-                logf("[init] new OnlineRecognizer ...");
+                logf("[init] step3 new OnlineRecognizer (may take a while)...");
+        long t0 = System.currentTimeMillis();
         recognizer = new OnlineRecognizer(context.getAssets(), config);
-        logf("[init] new OnlineRecognizer OK");
+        logf("[init] step3 ctor returned in " + (System.currentTimeMillis()-t0) + "ms");
+        logf("[init] step4 createStream");
         stream = recognizer.createStream("");
         logf("[init] createStream OK");
         Log.i(TAG, "recognizer ready, modelDir=" + modelDir);
