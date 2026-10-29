@@ -298,6 +298,15 @@ public class MainActivity extends Activity {
         if (req == REQ_AUDIO) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "录音权限已授予", Toast.LENGTH_SHORT).show();
+                // 授权成功后自动继续启动字幕，免用户再点一次
+                if (!prefs.isEnabled()) {
+                    btnToggle.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            toggleCaption();
+                        }
+                    }, 200);
+                }
             } else {
                 Toast.makeText(this, "实时字幕需要录音权限才能工作", Toast.LENGTH_LONG).show();
             }
@@ -317,11 +326,19 @@ public class MainActivity extends Activity {
             prefs.setEnabled(false);
         } else {
             if (!canOverlay()) {
-                Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "请先开启悬浮窗权限，正在跳转设置...", Toast.LENGTH_LONG).show();
+                Intent oi = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                try {
+                    startActivity(oi);
+                } catch (Throwable t) {
+                    Toast.makeText(this, "请到系统设置中手动开启悬浮窗权限", Toast.LENGTH_LONG).show();
+                }
                 return;
             }
             if (!canRecord()) {
-                Toast.makeText(this, "请先授予录音权限", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "请在弹出的系统框中点「允许」录音权限", Toast.LENGTH_LONG).show();
+                requestAudioPermission();
                 return;
             }
             svc.setAction(CaptionService.ACTION_START);

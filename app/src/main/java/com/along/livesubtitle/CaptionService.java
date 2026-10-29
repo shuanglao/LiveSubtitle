@@ -59,9 +59,19 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         // 此时 App 已无前台组件，startForeground 必被 DENIED，强启只会再次被杀形成螺旋
         // 因此直接 stopSelf() 打断螺旋，等用户下次在 App 内真正点「开始」再走完整链路
         if (intent == null) {
-            logf("sticky restart (intent=null), stopSelf to break death loop");
-            stopSelf();
-            return START_NOT_STICKY;
+            // 系统按 START_STICKY 自动拉起（被杀后恢复），intent 为 null。
+            // 旧逻辑 stopSelf 会永久停止，导致「窗口消失且永不恢复」。
+            // 新逻辑：若用户此前开启了字幕（prefs.isEnabled），则重建前台通知 + 窗口 + 引擎。
+            boolean want = prefs.isEnabled();
+            logf("sticky restart (intent=null), wantEnabled=" + want);
+            if (!want) {
+                logf("user stopped, stopSelf");
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            startForegroundSafe();
+            if (!running) startCaption();
+            return START_STICKY;
         }
         String action = intent.getAction();
         if (action == null) action = ACTION_START;
