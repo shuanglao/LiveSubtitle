@@ -80,7 +80,6 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     }
 
     // 硬闸：sticky 自动重启每个进程生命周期内最多重建一次，防止 1~2 秒一轮的死螺旋
-    private static boolean stickyRebuilt = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -89,23 +88,39 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         // 因此直接 stopSelf() 打断螺旋，等用户下次在 App 内真正点「开始」再走完整链路
         if (intent == null) {
             // 系统按 START_STICKY 自动拉起（被杀后恢复），intent 为 null。
-            // 旧逻辑 stopSelf 会永久停止，导致「窗口消失且永不恢复」。
-            // 新逻辑：若用户此前开启了字幕（prefs.isEnabled），则重建前台通知 + 窗口 + 引擎。
+            // ============================================================
+            // 硬闸（v2，落盘版）：
+            // 旧版用 static boolean stickyRebuilt 做闸，但每次被拉起都是「新进程」，
+            // static 重新初始化为 false，硬闸完全失效 → 形成 4~6 秒一轮的死螺旋。
+            // 现改为落盘计数 + 60 秒时间窗：窗口内第 2 次被拉起立即收手。
+            // ============================================================
             boolean want = prefs.isEnabled();
-            logf("sticky restart (intent=null), wantEnabled=" + want + ", stickyRebuilt=" + stickyRebuilt);
+            long now = System.currentTimeMillis();
+            long winAt = prefs.getStickyWindowAt();
+            int cnt = prefs.getStickyCount();
+            if (winAt <= 0L || now - winAt > 60000L) {
+                // 新窗口：重置计数
+                winAt = now;
+                cnt = 0;
+                prefs.setStickyWindowAt(winAt);
+            }
+            cnt++;
+            prefs.setStickyCount(cnt);
+            logf("sticky restart (intent=null), wantEnabled=" + want
+                    + ", stickyCount=" + cnt + " (window " + (now - winAt) + "ms)");
             if (!want) {
-                logf("user stopped, stopSelf");
+                logf("user stopped (enabled=false), stopSelf");
                 stopSelf();
                 return START_NOT_STICKY;
             }
-            if (stickyRebuilt) {
-                // 本进程已经自动重建过一轮，再次被拉起说明前面那轮没活下来，
-                // 继续重建只会形成 1~2 秒一轮的死螺旋（会把整个 App 弹出去），直接收手。
-                logf("sticky restart ABORT (already rebuilt once this process), stopSelf");
+            if (cnt > 1) {
+                // 60 秒内第 2 次被拉起 = 上一轮没活下来。继续重建只会死螺旋，
+                // 直接把 enabled 清掉并收手，让用户重新在 App 内点「开始」。
+                logf("sticky restart ABORT (count=" + cnt + " in 60s), clear enabled & stopSelf");
+                prefs.setEnabled(false);
                 stopSelf();
                 return START_NOT_STICKY;
             }
-            stickyRebuilt = true;
             startForegroundSafe();
             if (!running) startCaption();
             // 一次性：不再自续，避免被杀后无限拉起
@@ -132,20 +147,33 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             return START_STICKY;
         }
         // ACTION_START：真实用户触发
+        // 启动时清掉 sticky 计数窗口：用户主动点了「开始」，说明这是一次全新意愿，
+        // 之前积累的自动重启次数不应再影响判断。
+        prefs.setStickyCount(0);
+        prefs.setStickyWindowAt(System.currentTimeMillis());
         userStarted = true;
         startForegroundSafe();
         if (!running) {
             startCaption();
         }
-        return START_STICKY;
+        // 止血核心：返回 START_NOT_STICKY。
+        // 之前返回 START_STICKY，一旦进程被系统杀掉，系统会拿 null intent 反复拉起，
+        // 而每轮都是新进程、static 硬闸失效 → 4~6 秒一轮的死螺旋。
+        // 现在死了就安静地死，用户想用再在 App 里点「开始」。
+        return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        // 先摘掉 listener，避免 window.hide() 反向触发 onClose 递归
+        if (window != null) {
+            window.setListener(null);
+            window = null;
+        }
         stopCaption();
         // 注意：只有用户主动 ACTION_STOP 才把 enabled 置 false（在 onStartCommand 里已处理）
         // 系统回收/崩溃导致的 onDestroy 不能清标记，否则重启后不会自动恢复
-        logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ", running=" + running + ", stickyRebuilt=" + stickyRebuilt + ", pid=" + android.os.Process.myPid() + ", aliveMs=" + (System.currentTimeMillis() - aliveAt) + ")");
+        logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ", running=" + running + ", stickyCount=" + prefs.getStickyCount() + ", pid=" + android.os.Process.myPid() + ", aliveMs=" + (System.currentTimeMillis() - aliveAt) + ")");
         super.onDestroy();
     }
 
@@ -289,6 +317,12 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     @Override
     public void onClose() {
+        // 用户主动关掉窗口 = 明确不再需要字幕。
+        // 必须把 enabled 落盘清掉，否则系统 sticky 拉起后读到 true 又会重建 → 死循环。
+        logf("onClose: user closed window, clear enabled & stopSelf");
+        prefs.setEnabled(false);
+        userStarted = false;
+        prefs.setStickyCount(0);
         stopSelf();
     }
 

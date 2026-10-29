@@ -26,6 +26,22 @@ public class Prefs {
         sp.edit().putBoolean("enabled", v).commit();
     }
 
+    // ---------- sticky 重启硬闸（落盘，跨进程有效） ----------
+    /** 本分钟内 sticky 自动重启次数（static 在新进程里会重置为 0，必须落盘） */
+    public int getStickyCount() {
+        return sp.getInt("sticky_count", 0);
+    }
+    public void setStickyCount(int v) {
+        sp.edit().putInt("sticky_count", v).commit();
+    }
+    /** 计数窗口起始时刻（毫秒），用于判断是否需要重置计数 */
+    public long getStickyWindowAt() {
+        return sp.getLong("sticky_window_at", 0L);
+    }
+    public void setStickyWindowAt(long v) {
+        sp.edit().putLong("sticky_window_at", v).commit();
+    }
+
     // ---------- 音频模式 ----------
     /** 0 = 麦克风，1 = 内录（MediaProjection），2 = 自动（内录失败降级麦克风） */
     public int getAudioMode() {
