@@ -51,6 +51,46 @@ public class CaptionWindow {
         void onGeometryChanged(int x, int y, int wDp, int hDp);
     }
 
+    // ============================================================
+    //  静态登记表：记录本进程内所有「已 addView 但可能未移除」的窗口
+    //  用途：Service 被系统强杀（不走 onDestroy）或新旧实例交替时，
+    //        新实例启动前先 forceRemoveAll()，把残留 View 从 WindowManager 强拆，
+    //        避免「旧窗口不关、又新建一个」的叠加问题。
+    // ============================================================
+    private static final ArrayList<CaptionWindow> ACTIVE = new ArrayList<CaptionWindow>();
+
+    /**
+     * 强制移除本进程内所有残留悬浮窗。
+     * 在 startCaption() 建新窗之前调用，作为「重复建窗」的第二道防线。
+     * @return 被移除的窗口数量
+     */
+    public static int forceRemoveAll() {
+        int n = 0;
+        ArrayList<CaptionWindow> copy;
+        synchronized (ACTIVE) {
+            copy = new ArrayList<CaptionWindow>(ACTIVE);
+            ACTIVE.clear();
+        }
+        for (CaptionWindow w : copy) {
+            if (w == null) continue;
+            try {
+                if (w.added) {
+                    w.wlog("forceRemoveAll: removing leftover window");
+                    try {
+                        w.wm.removeViewImmediate(w.root);
+                    } catch (Throwable t) {
+                        try { w.wm.removeView(w.root); } catch (Throwable ignore) {}
+                    }
+                    w.added = false;
+                    n++;
+                }
+            } catch (Throwable t) {
+                Log.e("LiveSubtitle", "forceRemoveAll failed", t);
+            }
+        }
+        return n;
+    }
+
     private static final int ID_BODY = 0x7f0a0001;
     private static final int ID_FINAL = 0x7f0a0002;
     private static final int ID_BAR = 0x7f0a0003;
@@ -164,6 +204,9 @@ public class CaptionWindow {
         try {
             wm.addView(root, lp);
             added = true;
+            synchronized (ACTIVE) {
+                if (!ACTIVE.contains(this)) ACTIVE.add(this);
+            }
             // 注意：addView 之后 View 还未 measure/layout，此处 getWidth/getHeight 必为 0，
             // 不能当作「窗口尺寸为0」的证据（之前就是被这条日志误导的）。
             // 真正尺寸必须在下一帧 post 之后再取。
@@ -188,12 +231,16 @@ public class CaptionWindow {
     }
 
     public void hide() {
-        if (!added) return;
+        if (!added) {
+            synchronized (ACTIVE) { ACTIVE.remove(this); }
+            return;
+        }
         try {
             wm.removeView(root);
         } catch (Throwable ignore) {
         }
         added = false;
+        synchronized (ACTIVE) { ACTIVE.remove(this); }
     }
 
     public void setInitialLocked(boolean v) {

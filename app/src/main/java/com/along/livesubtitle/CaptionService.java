@@ -165,9 +165,18 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     @Override
     public void onDestroy() {
-        // 先摘掉 listener，避免 window.hide() 反向触发 onClose 递归
+        // 关键修复（窗口泄漏）：旧代码先把 window 置 null 再调 stopCaption()，
+        // 导致 stopCaption() 里的 window.hide() 永远走不到 → View 从不 removeView，
+        // 一直挂在 WindowManager 上。Service 死了窗口还在，下次启动又建一个 → 窗口越叠越多。
+        // 正确顺序：先摘 listener（防 hide→onClose 递归），再真正 hide() 移除 View，最后才置 null。
         if (window != null) {
+            logf("onDestroy: hiding leftover window before release");
             window.setListener(null);
+            try {
+                window.hide();
+            } catch (Throwable t) {
+                logf("onDestroy: window.hide FAILED: " + Log.getStackTraceString(t));
+            }
             window = null;
         }
         stopCaption();
@@ -188,9 +197,28 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     private void startCaption() {
         // 幂等守卫：窗口已在显示且引擎已起，直接返回，避免反复重建窗口
+        // 注意：只有「同一 Service 实例」内有效，跨实例/跨进程要靠下面的 forceRemoveAll()
         if (running && window != null && window.isShowing()) {
             logf("startCaption SKIP (already running & showing)");
             return;
+        }
+        // 第二道防线（关键）：先强制清掉本进程所有残留悬浮窗。
+        // 场景：Service 被系统强杀（不走 onDestroy）→ 旧 View 仍挂在 WindowManager 上，
+        //       新实例启动时 window==null 就会再建一个 → 用户看到「旧窗口不关、新的叠上来」。
+        int removed = CaptionWindow.forceRemoveAll();
+        if (removed > 0) {
+            logf("startCaption: force removed " + removed + " leftover window(s)");
+        }
+        // 第三道防线：本实例持有的旧 window 也要先彻底 hide 掉
+        if (window != null) {
+            logf("startCaption: hiding previous instance window before rebuild");
+            try {
+                window.setListener(null);
+                window.hide();
+            } catch (Throwable t) {
+                logf("startCaption: previous window hide FAILED: " + Log.getStackTraceString(t));
+            }
+            window = null;
         }
         running = true;
         // 提前落盘：只要决定开字幕，立刻把 enabled 写成 true。
