@@ -27,6 +27,37 @@ public interface AsrEngine {
          * @param level 0=普通信息 1=就绪完成 2=错误
          */
         void onStatus(String msg, int pct, int level);
+
+        /**
+         * 带类型的状态回调（新接口）。实现类应优先调用这个版本，
+         * 让 UI 无需再靠文案猜「该不该弹进度条」。
+         */
+        void onStatusKind(String msg, int pct, StatusKind kind);
+    }
+
+    /**
+     * 状态类型：决定 UI 侧是否应该弹出/收起「准备中」进度条。
+     * 用枚举替代字符串关键字匹配，文案怎么改都不影响逻辑。
+     */
+    enum StatusKind {
+        /** 引擎准备中（下载/加载/拷贝模型），应显示进度条 */
+        PREPARING,
+        /** 运行时提示（已静音/已恢复/正在聆听等），绝不能弹进度条 */
+        RUNTIME,
+        /** 就绪，进度条必须收起 */
+        READY,
+        /** 错误，终态，进度条必须收起 */
+        ERROR;
+
+        /** 仅 PREPARING 需要显示进度条；其余类型必须收起 */
+        public boolean showProgress() {
+            return this == PREPARING;
+        }
+
+        /** 是否为终态（就绪/错误），终态必须收起进度条 */
+        public boolean isTerminal() {
+            return this == READY || this == ERROR;
+        }
     }
 
     /** 开始识别 */

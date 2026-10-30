@@ -136,19 +136,9 @@ public class CaptionWindow {
     private boolean resizing = false;
     private int screenW, screenH;
 
-    /** 写 svc.log（与 CaptionService.logf 共用同一文件，便于统一排查） */
+    /** 写 svc.log（统一委托 Lg，与 CaptionService 共用同一文件） */
     private void wlog(String msg) {
-        try {
-            File f = new File(ctx.getFilesDir(), "svc.log");
-            if (f.exists() && f.length() > 256 * 1024) f.delete();
-            String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-            FileOutputStream fos = new FileOutputStream(f, true);
-            OutputStreamWriter w = new OutputStreamWriter(fos, "UTF-8");
-            w.write(ts + " [win] " + msg + "\n");
-            w.flush();
-            w.close();
-        } catch (Throwable ignore) {
-        }
+        Lg.svc(ctx, "[win] " + msg);
     }
 
 
@@ -706,77 +696,73 @@ public class CaptionWindow {
         }
     }
 
-    /**
-     * 引擎准备阶段状态回调（由 CaptionService 的 onStatus 转发而来）。
-     * pct>=0 走确定进度条；pct<0 走不确定态（转圈）；level==1 表示就绪，收起进度条。
-     */
-    /** 收起进度条（统一出口，避免残留） */
+    /** 收起进度条（唯一出口） */
     private void hideProgress() {
         if (pbLoading != null) pbLoading.setVisibility(View.GONE);
     }
 
-    /** 判定某条状态文案是否属于“运行时状态”（静音/恢复/聆听），这类不应弹进度条 */
-    private boolean isRuntimeStateText(String msg) {
-        if (msg == null) return false;
-        return msg.indexOf("已静音") >= 0
-                || msg.indexOf("恢复") >= 0
-                || msg.indexOf("聆听") >= 0
-                || msg.indexOf("等待声音") >= 0;
+    /**
+     * 统一的进度条显隐控制：整个类只有这里会改 pbLoading 的可见性。
+     * 由 AsrEngine.StatusKind 直接决定，不再匹配任何文案字符串。
+     */
+    private void applyProgress(AsrEngine.StatusKind kind, int pct) {
+        if (pbLoading == null) return;
+        if (kind != null && kind.showProgress()) {
+            engineBusy = true;
+            pbLoading.setVisibility(View.VISIBLE);
+            if (pct >= 0) {
+                pbLoading.setIndeterminate(false);
+                pbLoading.setProgress(pct);
+            } else {
+                pbLoading.setIndeterminate(true);
+            }
+        } else {
+            engineBusy = false;
+            hideProgress();
+        }
     }
-    public void onEngineStatus(final String msg, final int pct, final int level) {
+
+    /**
+     * 引擎状态回调（结构化版本）。
+     * 进度条只由 kind 决定，文案仅用于显示。
+     */
+    public void onEngineStatusKind(final String msg, final int pct,
+                                  final AsrEngine.StatusKind kind) {
         ui.post(new Runnable() {
             @Override public void run() {
                 if (tvBody == null) return;
-                // level: 0=普通状态 1=就绪(开始聆听) 2=错误
-                if (level == 1) {
-                    // 就绪：不管之前是什么，进度条一律收起
-                    engineBusy = false;
-                    hideProgress();
-                    tvBody.setVisibility(View.VISIBLE);
-                    tvBody.setText("正在聆听…");
+                applyProgress(kind, pct);
+                tvBody.setVisibility(View.VISIBLE);
+
+                if (kind == AsrEngine.StatusKind.READY) {
+                    tvBody.setText(TextUtils.isEmpty(msg) ? "正在聆听…" : msg);
                     tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x66FFFFFF);
                     return;
                 }
-                if (level == 2) {
-                    // 错误：收起进度条，红字提示
-                    engineBusy = false;
-                    hideProgress();
-                    tvBody.setVisibility(View.VISIBLE);
+                if (kind == AsrEngine.StatusKind.ERROR) {
                     tvBody.setTextColor(0xFFFF6B6B);
                     tvBody.setText(pct >= 0 ? (msg + " " + pct + "%") : msg);
                     return;
                 }
-                // ---- level == 0：只有"下载/加载/准备"这类才显示进度条 ----
-                boolean downloading = pct >= 0;
-                if (downloading) {
-                    // 确定态进度：显示进度条并把百分比压进文字
-                    engineBusy = true;
-                    if (pbLoading != null) {
-                        pbLoading.setVisibility(View.VISIBLE);
-                        pbLoading.setIndeterminate(false);
-                        pbLoading.setProgress(pct);
-                    }
-                } else {
-                    // 无百分比：可能是"首次启动正在下载"（转圈）也可能是"已静音/已恢复"这种通知
-                    // 用关键字区分：静音/恢复/聆听 属于运行时状态，绝不能弹进度条
-                    boolean runtimeState = isRuntimeStateText(msg);
-                    if (runtimeState) {
-                        engineBusy = false;
-                        hideProgress();
-                    } else {
-                        engineBusy = true;
-                        if (pbLoading != null) {
-                            pbLoading.setVisibility(View.VISIBLE);
-                            pbLoading.setIndeterminate(true);
-                        }
-                    }
-                }
-                tvBody.setVisibility(View.VISIBLE);
+                // PREPARING / RUNTIME：正常信息色
                 tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x99FFFFFF);
                 tvBody.setText(pct >= 0 ? (msg + " " + pct + "%") : msg);
             }
         });
     }
+
+    /**
+     * 兼容旧回调：把 level/pct 翻译成 StatusKind 再走新逻辑。
+     * 保留此方法，保证旧引擎实现也能正常工作。
+     */
+    public void onEngineStatus(final String msg, final int pct, final int level) {
+        AsrEngine.StatusKind kind;
+        if (level == 1) kind = AsrEngine.StatusKind.READY;
+        else if (level == 2) kind = AsrEngine.StatusKind.ERROR;
+        else kind = pct >= 0 ? AsrEngine.StatusKind.PREPARING : AsrEngine.StatusKind.RUNTIME;
+        onEngineStatusKind(msg, pct, kind);
+    }
+
     /** 在字幕区显示一行状态（引擎错误/下载进度等），让用户能看见程序在干什么 */
     public void setStatusText(final String text) {
         ui.post(new Runnable() {
@@ -786,8 +772,7 @@ public class CaptionWindow {
                 tvBody.setTextColor(0xFFFF6B6B);
                 tvBody.setText(text);
                 // 错误提示是终态，顺手收掉准备态进度条
-                engineBusy = false;
-                hideProgress();
+                applyProgress(AsrEngine.StatusKind.ERROR, -1);
             }
         });
     }

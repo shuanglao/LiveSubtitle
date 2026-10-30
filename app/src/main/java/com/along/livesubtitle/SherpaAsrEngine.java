@@ -196,7 +196,7 @@ public class SherpaAsrEngine implements AsrEngine {
             return;
         }
 
-        emitStatus("\u9996\u6b21\u542f\u52a8\uff0c\u6b63\u5728\u4e0b\u8f7d\u8bed\u97f3\u6a21\u578b\uff08\u7ea6 190MB\uff09\uff0c\u8bf7\u4fdd\u6301\u7f51\u7edc\u7545\u901a\u2026");
+        emitStatus("首次启动需下载语音模型（约 190MB），预计 1-3 分钟，请勿退出…");
         downloadModel(target);
     }
 
@@ -215,22 +215,9 @@ public class SherpaAsrEngine implements AsrEngine {
             "https://huggingface.co/csukuangfj/" + MODEL_DIR + "/resolve/main/"
     };
 
-    /** 统一下载日志：写入 filesDir/dllog.txt，App 侧 logcat 常被系统限制，只能靠自己落盘 */
+    /** 统一下载日志：统一委托 Lg.eng（写 filesDir/dllog.txt） */
     private void logf(String msg) {
-        Log.i(TAG, msg);
-        try {
-            java.io.File lf = new java.io.File(context.getFilesDir(), "dllog.txt");
-            // 超过 256KB 就清空，避免无限增长
-            if (lf.exists() && lf.length() > 256 * 1024) {
-                //noinspection ResultOfMethodCallIgnored
-                lf.delete();
-            }
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(lf, true);
-            fos.write((new java.util.Date().toString() + "  " + msg + "\n").getBytes("UTF-8"));
-            fos.flush();
-            fos.close();
-        } catch (Throwable ignore) {
-        }
+        Lg.eng(context, msg);
     }
 
     /** 逐个下载模型文件，已存在且有效的跳过，支持断点续传 */
@@ -255,28 +242,30 @@ public class SherpaAsrEngine implements AsrEngine {
                         + " resume@" + (part.exists() ? part.length() : 0L) + " from " + base);
                 try {
                     long at = part.exists() ? part.length() : 0L;
-                    downloadOne(base + name, part, at);
-                    if (part.exists() && part.length() > 1024) {
+                    long expected = downloadOne(base + name, part, at);
+                    long actual = part.exists() ? part.length() : 0L;
+                    if (expected > 0 && actual != expected) {
+                        // 服务端声明的总长与实际落盘不符：丢掉残片，换源重下
+                        logf("BAD " + name + " expected=" + expected + " actual=" + actual);
+                        //noinspection ResultOfMethodCallIgnored
+                        part.delete();
+                        throw new java.io.IOException("incomplete " + name
+                                + " " + actual + "/" + expected);
+                    }
+                    if (actual > 1024) {
                         ok = true;
-                        logf("ok " + name + " bytes=" + part.length());
+                        logf("ok " + name + " bytes=" + actual
+                                + (expected > 0 ? " (verified)" : " (len unknown)"));
                         break;
                     } else {
-                        logf("empty " + name + " bytes=" + (part.exists() ? part.length() : 0L));
+                        logf("empty " + name + " bytes=" + actual);
                     }
                 } catch (Exception e) {
                     lastErr = e;
                     String why = e.getClass().getSimpleName() + ": " + e.getMessage();
                     Log.e(TAG, "download failed from " + base + " : " + why);
-                    // 把真实失败原因落到文件，便于排查（App 侧 logcat 常被系统限制）
-                    try {
-                        java.io.File ef = new java.io.File(target.getParentFile(), "dl_err.txt");
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(ef, true);
-                        fos.write((new java.util.Date().toString() + " [" + (u + 1) + "/"
-                                + MODEL_BASE_URLS.length + "] " + base + "\n  " + why + "\n").getBytes("UTF-8"));
-                        fos.flush();
-                        fos.close();
-                    } catch (Throwable ignore) {
-                    }
+                    // 把真实失败原因落到文件（统一委托 Lg.err）
+                    Lg.err(context, "[" + (u + 1) + "/" + MODEL_BASE_URLS.length + "] " + base + "  " + why);
                     String shortWhy = why.length() > 26 ? why.substring(0, 26) : why;
                     emitStatus("\u5931\u8d25" + (u + 1) + "/" + MODEL_BASE_URLS.length
                             + "\uff1a" + shortWhy);
@@ -335,12 +324,12 @@ public class SherpaAsrEngine implements AsrEngine {
     }
 
     /** 单文件下载，startAt>0 时用 Range 续传 */
-    private void downloadOne(String urlStr, File dest, long startAt) throws Exception {
-        downloadOneInner(urlStr, dest, startAt);
+    private long downloadOne(String urlStr, File dest, long startAt) throws Exception {
+        return downloadOneInner(urlStr, dest, startAt);
     }
 
     /** 实际下载实现 */
-    private void downloadOneInner(String urlStr, File dest, long startAt) throws Exception {
+    private long downloadOneInner(String urlStr, File dest, long startAt) throws Exception {
         java.net.HttpURLConnection conn = null;
         InputStream in = null;
         OutputStream os = null;
@@ -385,7 +374,7 @@ public class SherpaAsrEngine implements AsrEngine {
             }
             in = conn.getInputStream();
             byte[] buf = new byte[65536];
-            long total = conn.getContentLength() + startAt;
+            long total = conn.getContentLengthLong() + startAt;
             long done = startAt;
             long lastEmit = 0L;
             int n;
@@ -402,6 +391,7 @@ public class SherpaAsrEngine implements AsrEngine {
                 }
             }
             os.flush();
+            return total;
         } finally {
             closeQuietly(in);
             closeQuietly(os);
@@ -434,11 +424,28 @@ public class SherpaAsrEngine implements AsrEngine {
         Log.i(TAG, "status[" + pct + "%," + level + "]: " + msg);
         AsrEngine.Callback cb = callback;
         if (cb != null) {
+            // 同步走新接口：由引擎自己声明“这是什么状态”，UI 不再猜文案
+            AsrEngine.StatusKind kind = kindOf(level, pct);
+            try {
+                cb.onStatusKind(msg, pct, kind);
+            } catch (Throwable ignore) {
+            }
             try {
                 cb.onStatus(msg, pct, level);
             } catch (Throwable ignore) {
             }
         }
+    }
+
+    /**
+     * 把旧的三元 level/pct 映射为语义化状态类型。
+     * level=1 就绪、level=2 错误；level=0 时按 pct 判定是“准备中”还是“运行时提示”。
+     */
+    private static AsrEngine.StatusKind kindOf(int level, int pct) {
+        if (level == 1) return AsrEngine.StatusKind.READY;
+        if (level == 2) return AsrEngine.StatusKind.ERROR;
+        // level == 0：带百分比 === 在下载/加载；不带百分比 === 运行时提示（静音/恢复等）
+        return pct >= 0 ? AsrEngine.StatusKind.PREPARING : AsrEngine.StatusKind.RUNTIME;
     }
 
     /** 递归复制 assets 子目录到目标目录 */
@@ -725,18 +732,9 @@ public class SherpaAsrEngine implements AsrEngine {
         }
     }
 
-    /** 引擎侧落盘（本机 logcat 读不到，必须显式写文件） */
+    /** 引擎侧落盘（统一委托 Lg.svc，带 [eng] 前缀） */
     private void elog(String msg) {
-        try {
-            java.io.File f = new java.io.File(context.getFilesDir(), "svc.log");
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
-            String ts = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
-                    .format(new java.util.Date());
-            fos.write((ts + " [eng] " + msg + "\n").getBytes("UTF-8"));
-            fos.flush();
-            fos.close();
-        } catch (Throwable ignore) {
-        }
+        Lg.svc(context, "[eng] " + msg);
     }
     private void emitError(int code, String msg) {
         Log.w(TAG, "error " + code + ": " + msg);

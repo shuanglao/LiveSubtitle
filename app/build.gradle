@@ -10,8 +10,8 @@ android {
         applicationId "com.along.livesubtitle"
         minSdk 28
         targetSdk 34
-        versionCode 4
-        versionName "1.3"
+        versionCode 5
+        versionName "1.4"
         // 只打手机需要的 ABI，砍掉 x86/x86_64（省 ~70MB 解压体积）
         ndk {
             abiFilters 'arm64-v8a'

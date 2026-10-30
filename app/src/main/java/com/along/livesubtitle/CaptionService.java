@@ -31,6 +31,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     public static final String ACTION_TOGGLE_LOCK = "com.along.livesubtitle.TOGGLE_LOCK";
     /** 通知栏：显示/隐藏字幕窗（窗口穿透或挡屏时仍能唤回） */
     public static final String ACTION_TOGGLE_SHOW = "com.along.livesubtitle.TOGGLE_SHOW";
+    /** 通知栏：一键重启字幕（服务异常/卡死时救命） */
+    public static final String ACTION_RESTART = "com.along.livesubtitle.RESTART";
 
     private static final String CHANNEL_ID = "live_subtitle";
     /** PendingIntent 不可变标志（Android 12+ 必需，否则点击无响应） */
@@ -180,6 +182,31 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                 logf("ACTION_TOGGLE_SHOW -> shown (locked=" + prefs.isLockedRemembered() + ")");
             }
             updateNotification(window.isLocked());
+            return START_STICKY;
+        }
+        if (ACTION_RESTART.equals(action)) {
+            // 救命通道：服务被硬闸收手、卡死、或窗口异常时，不需要进 App 里操作。
+            // 这里把 sticky 计数清零（让硬闸重新可用），强制 enabled=true，然后重建。
+            logf("ACTION_RESTART -> rebuilding (running=" + running + ", shown=" + (window != null && window.isShowing()) + ")");
+            prefs.setStickyCount(0);
+            prefs.setStickyWindowAt(System.currentTimeMillis());
+            prefs.setEnabled(true);
+            userStarted = true;
+            hiddenByUser = false;
+            try {
+                if (running) stopCaption();
+            } catch (Throwable t) {
+                logf("ACTION_RESTART stopCaption FAILED: " + Log.getStackTraceString(t));
+            }
+            try {
+                startForegroundSafe();
+                startCaption();
+                toast("字幕已重启");
+                logf("ACTION_RESTART -> started");
+            } catch (Throwable t) {
+                logf("ACTION_RESTART startCaption FAILED: " + Log.getStackTraceString(t));
+                toast("重启失败，请进 App 内重试");
+            }
             return START_STICKY;
         }
         // ACTION_START：真实用户触发
@@ -335,8 +362,14 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             }
             @Override
             public void onStatus(String msg, int pct, int level) {
+                // 旧接口保留兼容；新接口 onStatusKind 会带上语义类型，UI 走那条
                 logf("STATUS pct=" + pct + " level=" + level + " msg=" + msg);
-                if (window != null) window.onEngineStatus(msg, pct, level);
+            }
+
+            @Override
+            public void onStatusKind(String msg, int pct, AsrEngine.StatusKind kind) {
+                logf("STATUS " + kind + " pct=" + pct + " msg=" + msg);
+                if (window != null) window.onEngineStatusKind(msg, pct, kind);
             }
         });
     }
@@ -439,19 +472,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         }
     }
 
-    /** 服务侧取证日志：写 files/svc.log，超 256KB 自动清空 */
+    /** 服务侧取证日志：统一委托 Lg（写 files/svc.log，超 256KB 自动轮转） */
     private void logf(String msg) {
-        String line = android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis())
-                + " " + msg + "\n";
-        Log.i("LiveSubtitleSvc", msg);
-        try {
-            java.io.File f = new java.io.File(getFilesDir(), "svc.log");
-            if (f.exists() && f.length() > 256 * 1024) f.delete();
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
-            fos.write(line.getBytes("UTF-8"));
-            fos.close();
-        } catch (Throwable ignore) {
-        }
+        Lg.svc(this, msg);
     }
 
     private void updateNotification(boolean locked) {
@@ -481,6 +504,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         showHide.setAction(ACTION_TOGGLE_SHOW);
         PendingIntent piShowHide = PendingIntent.getService(
                 this, 3, showHide, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
+        Intent restart = new Intent(this, CaptionService.class);
+        restart.setAction(ACTION_RESTART);
+        PendingIntent piRestart = PendingIntent.getService(
+                this, 4, restart, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
 
         String text;
         if (locked && showing) {
@@ -510,7 +537,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                 .addAction(android.R.drawable.ic_menu_view,
                         showing ? "隐藏" : "显示", piShowHide)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel,
-                        "停止", piStop);
+                        "停止", piStop),
+                .addAction(android.R.drawable.ic_menu_rotate,
+                        "重启", piRestart);
         return b.build();
     }
 
