@@ -248,16 +248,13 @@ final class WindowView {
                 canvas.restoreToCount(sc);
             }
         };
-        v.setTag(PROGRESS_TAG, Integer.valueOf(0));
+        v.setTag(Integer.valueOf(0));
         return v;
     }
 
-    /** 进度值读写（CaptionWindow 通过 setProgress 调用，这里劫持）。 */
-    private static final String PROGRESS_TAG = "pb_pct";
-
     private int getProgressPct() {
         if (pbLoading == null) return 0;
-        Object o = pbLoading.getTag(PROGRESS_TAG);
+        Object o = pbLoading.getTag();
         if (o instanceof Integer) return ((Integer) o).intValue();
         return 0;
     }
@@ -267,7 +264,7 @@ final class WindowView {
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
         if (pbLoading != null) {
-            pbLoading.setTag(PROGRESS_TAG, Integer.valueOf(pct));
+            pbLoading.setTag(Integer.valueOf(pct));
             pbLoading.invalidate();
         }
     }
