@@ -111,7 +111,7 @@ public class CaptionWindow {
     private boolean broadcastNewLine = false;
     private ScrollView scv;         // 历史记录滚动容器（可上下滑动查看）
     private TextView tvBody;        // 临时（正在说）的文字
-    private ProgressBar pbLoading;   // 模型下载/引擎准备进度条（不确定态用转圈）
+    private View pbLoading;   // 模型下载/引擎准备进度条（自绘细条，v1.6 毛玻璃）
     /** 引擎处于准备阶段（下载/加载/等待）时为 true，此时进度条可见。出字幕或就绪后必须置 false */
     private boolean engineBusy = false;
     private LinearLayout barTop;
@@ -611,12 +611,10 @@ public class CaptionWindow {
         if (kind != null && kind.showProgress()) {
             engineBusy = true;
             pbLoading.setVisibility(View.VISIBLE);
-            if (pct >= 0) {
-                pbLoading.setIndeterminate(false);
-                pbLoading.setProgress(pct);
-            } else {
-                pbLoading.setIndeterminate(true);
-            }
+            // v1.6：进度条改为自绘细条，没有「不确定态转圈」这种系统控件语义。
+            // pct < 0（尚未拿到进度）时保留上一次进度值，首次则为 0（空轨道），
+            // 视觉上表现为一条静止的底轨，等真实进度到达后再往前走。
+            if (pct >= 0 && wv != null) wv.setProgress(pct);
         } else {
             engineBusy = false;
             hideProgress();
@@ -685,16 +683,11 @@ public class CaptionWindow {
     /** 应用透明背景 / 字号等外观设置（设置页改动后调用） */
     public void refreshStyle() {
         if (boxCard == null) return;
-        int bg = prefs.getBgColor();
-        int alpha = prefs.getBgAlpha();
-        int color = Color.argb(alpha,
-                Color.red(bg), Color.green(bg), Color.blue(bg));
 
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(dp(14));
-        g.setStroke(dp(1), 0x33FFFFFF);
-        boxCard.setBackground(g);
+        // v1.6：卡片皮肤统一交给 WindowView.applyCardBackground 绘制
+        // （垂直渐变 + 大圆角 + 高光内边 + elevation 阴影 + 裁剪）。
+        // 此处若再手搓 GradientDrawable 会把毛玻璃皮肤整个盖掉，故一律不碰背景。
+        if (wv != null) wv.applyCardBackground(prefs.getBgColor(), prefs.getBgAlpha());
 
         if (tvBody != null) {
             tvBody.setTextSize(prefs.getFontSize());
@@ -703,17 +696,11 @@ public class CaptionWindow {
         }
         if (tvFinal != null) {
             tvFinal.setTextSize(prefs.getFontSize());
-            tvFinal.setTextColor(applyTextAlpha(0xFFFFFFFF));
+            // 与 WindowView 构造时的口径保持一致：文字色取用户选色 × 0.66
+            tvFinal.setTextColor(wv.applyTextAlpha(prefs.getTextColor(), 0.66f));
         }
-        // 右下角手柄可视化
-        if (handle != null) {
-            GradientDrawable hg = new GradientDrawable();
-            hg.setColor(0x88FFFFFF);
-            hg.setCornerRadius(dp(6));
-            handle.setBackground(hg);
-            handle.setAlpha(0.55f);
-            handle.setPadding(0, 0, 0, 0);
-        }
+        // 右下角手柄：v1.6 起是自绘斜纹（View.onDraw），
+        // 不能再 setBackground / setAlpha，否则会盖掉自绘内容。
     }
 
     /**

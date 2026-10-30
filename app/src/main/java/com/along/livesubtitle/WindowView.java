@@ -1,14 +1,17 @@
 package com.along.livesubtitle;
 
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -21,8 +24,11 @@ import android.widget.TextView;
  *   3. 不持有任何业务状态（locked/dragging/engineBusy 一概不碰）；
  *   4. 不引用 WindowManager / lp / listener。
  *
- * 对外只暴露 public 字段，宿主通过 wv.root、wv.tvLockBtn
- * 等直接访问，事件绑定与状态机仍由 CaptionWindow 掌管。
+ * 视觉风格：毛玻璃浅色风（v1.6）
+ *   - 卡片：垂直双层渐变 + 顶部高光内边 + 底部暗边 + 柔和外阴影
+ *   - 顶部条：贴右上角浮动胶囊，不再整行切碎画面
+ *   - 进度条：自绘圆角细条（LayerDrawable + GradientDrawable）
+ *   - 缩放手柄：右下角斜纹 3 条线
  */
 final class WindowView {
 
@@ -36,18 +42,21 @@ final class WindowView {
     final ScrollView scv;
     final TextView tvFinal;
     final TextView tvBody;
-    final ProgressBar pbLoading;
+    final View pbLoading;
     final View handle;
 
     private final Context ctx;
     private final Prefs prefs;
 
+    // 进度条专用（自绘圆角细条，动态 level）
+    private LayerDrawable pbDrawable;
+
     WindowView(Context ctx, Prefs prefs) {
         this.ctx = ctx;
         this.prefs = prefs;
 
-        int pad = dp(12);
-        int padS = dp(8);
+        int pad = dp(14);
+        int padS = dp(10);
 
         root = new FrameLayout(ctx);
 
@@ -58,59 +67,79 @@ final class WindowView {
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT);
+        // 留出阴影绘制空间（阴影像素往外扩散，卡片本身缩进来一点）
+        int sh = dp(6);
+        cardLp.setMargins(sh, sh / 2, sh, sh);
         root.addView(boxCard, cardLp);
 
-        // ---- 顶部操作条（未锁定时可见）----
+        // ---- 顶部操作条（浮动胶囊，贴右上角）----
         barTop = new LinearLayout(ctx);
         barTop.setOrientation(LinearLayout.HORIZONTAL);
         barTop.setGravity(Gravity.CENTER_VERTICAL);
+        barTop.setPadding(dp(6), dp(3), dp(6), dp(3));
+        // 浮动胶囊底：半透明白 + 细边 + 大圆角
+        GradientDrawable pillBg = new GradientDrawable();
+        pillBg.setColor(0xCCFFFFFF);
+        pillBg.setCornerRadius(dp(20));
+        pillBg.setStroke(dp(1), 0x55FFFFFF);
+        barTop.setBackground(pillBg);
+        barTop.setElevation(dp(2));
         LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        barLp.bottomMargin = dp(4);
+        barLp.gravity = Gravity.END;
+        barLp.bottomMargin = dp(6);
         boxCard.addView(barTop, barLp);
 
-        // 拖动手柄（⋮⋮ 样式）
+        // 拖动手柄：6 点阵（两列三点），比 ⠿ 更纤细克制
         dragIcon = new TextView(ctx);
-        dragIcon.setText("\u283f");
-        dragIcon.setTextSize(16f);
-        dragIcon.setTextColor(0xFFB0B0B0);
-        dragIcon.setPadding(dp(4), 0, dp(8), 0);
+        dragIcon.setText("\u2237\u2237");
+        dragIcon.setTextSize(13f);
+        dragIcon.setTextColor(0xFF9AAAA8);
+        dragIcon.setAlpha(0.85f);
+        dragIcon.setPadding(dp(4), 0, dp(6), 0);
+        dragIcon.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams dragLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
+        dragLp.gravity = Gravity.CENTER_VERTICAL;
         barTop.addView(dragIcon, dragLp);
 
-        // 中间弹性空白
-        View spacer = new View(ctx);
-        barTop.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        // 分隔线（胶囊内细竖线）
+        View vDiv = new View(ctx);
+        GradientDrawable divBg = new GradientDrawable();
+        divBg.setColor(0x1A0E5F5C);
+        divBg.setCornerRadius(dp(1));
+        vDiv.setBackground(divBg);
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(dp(1), dp(12));
+        divLp.rightMargin = dp(4);
+        divLp.gravity = Gravity.CENTER_VERTICAL;
+        barTop.addView(vDiv, divLp);
 
-        // 锁定按钮
+        // 锁定按钮：圆形半透明图标
         tvLockBtn = new TextView(ctx);
-        tvLockBtn.setText("锁定");
-        tvLockBtn.setTextSize(12f);
+        tvLockBtn.setText("\u25CB");   // ○ 未锁定态
+        tvLockBtn.setTextSize(15f);
         tvLockBtn.setTextColor(0xFF0E5F5C);
-        tvLockBtn.setBackground(makePill(0xFFD6EDEC));
-        tvLockBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
-        LinearLayout.LayoutParams lockLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        lockLp.rightMargin = dp(6);
+        tvLockBtn.setBackground(makeCircle(0x140E5F5C));
+        tvLockBtn.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams lockLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        lockLp.rightMargin = dp(4);
+        lockLp.gravity = Gravity.CENTER_VERTICAL;
         barTop.addView(tvLockBtn, lockLp);
 
         // 关闭按钮（单击无效，长按才关，防误触）
         tvClose = new TextView(ctx);
-        tvClose.setText("×");
-        tvClose.setTextSize(16f);
-        tvClose.setTextColor(0xFF9A9A9A);
-        tvClose.setPadding(dp(10), dp(6), dp(10), dp(6));
-        // 保证足够触摸面积（避免又窄又小被误命中）
-        tvClose.setMinWidth(dp(36));
-        tvClose.setMinHeight(dp(36));
+        tvClose.setText("\u00D7");
+        tvClose.setTextSize(17f);
+        tvClose.setTextColor(0xFF7A8B89);
+        tvClose.setBackground(makeCircle(0x14000000));
         tvClose.setGravity(Gravity.CENTER);
-        barTop.addView(tvClose, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        tvClose.setMinWidth(dp(30));
+        tvClose.setMinHeight(dp(30));
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        closeLp.gravity = Gravity.CENTER_VERTICAL;
+        barTop.addView(tvClose, closeLp);
 
         // ---- 已定稿文（放进 ScrollView，历史可上下滑动）----
         scv = new ScrollView(ctx);
@@ -124,54 +153,173 @@ final class WindowView {
         boxCard.addView(scv, scvLp);
 
         tvFinal = new TextView(ctx);
-        tvFinal.setTextColor(applyTextAlpha(0xFFFFFFFF));
+        // 定稿行：降低不透明度，让当前行更突出
+        tvFinal.setTextColor(applyTextAlpha(prefs.getTextColor(), 0.66f));
         tvFinal.setTextSize(prefs.getFontSize());
         applyLineSpacing(tvFinal);
-        // 高度 WRAP_CONTENT：让内容自然撑开，ScrollView 才有东西可滚
         ScrollView.LayoutParams finalLp = new ScrollView.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT);
         scv.addView(tvFinal, finalLp);
 
-        // ---- 临时文字（正在说的话，高亮）----
+        // ---- 临时文字（正在说的话，高亮 + 轻微加粗）----
         tvBody = new TextView(ctx);
-        tvBody.setTextColor(applyTextAlpha(prefs.getTextColor()));
+        tvBody.setTextColor(applyTextAlpha(prefs.getTextColor(), 1f));
         tvBody.setTextSize(prefs.getFontSize());
+        tvBody.setTypeface(tvBody.getTypeface(), android.graphics.Typeface.BOLD);
         applyLineSpacing(tvBody);
         tvBody.setMaxLines(prefs.getMaxLines());
         tvBody.setEllipsize(TextUtils.TruncateAt.START);
         LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
+        bodyLp.topMargin = dp(2);
         boxCard.addView(tvBody, bodyLp);
 
-        // ---- 准备阶段进度条（默认隐藏，状态机驱动）----
-        pbLoading = new ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal);
-        pbLoading.setMax(100);
-        pbLoading.setProgress(0);
+        // ---- 准备阶段进度条（自绘圆角细条，默认隐藏）----
+        pbLoading = buildProgressBar();
         pbLoading.setVisibility(View.GONE);
         LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(3));
-        pbLp.topMargin = dp(4);
+        pbLp.topMargin = dp(8);
         boxCard.addView(pbLoading, pbLp);
 
-        // ---- 右下角缩放手柄 ----
-        handle = new View(ctx);
-        FrameLayout.LayoutParams handleLp = new FrameLayout.LayoutParams(dp(22), dp(22));
+        // ---- 右下角缩放手柄（斜纹 3 条）----
+        handle = buildHandle();
+        FrameLayout.LayoutParams handleLp = new FrameLayout.LayoutParams(dp(26), dp(26));
         handleLp.gravity = Gravity.RIGHT | Gravity.BOTTOM;
+        handleLp.rightMargin = dp(4);
+        handleLp.bottomMargin = dp(4);
         root.addView(handle, handleLp);
     }
 
     // ============================================================
-    //  样式工具（原本在 CaptionWindow，只依赖 ctx + prefs，随视图层迁入）
+    //  自绘控件
+    // ============================================================
+
+    /** 自绘圆角细进度条：底轨 + 进度层，用 level 驱动。 */
+    private View buildProgressBar() {
+        GradientDrawable track = new GradientDrawable();
+        track.setColor(0x1F0E5F5C);
+        track.setCornerRadius(dp(2));
+
+        GradientDrawable bar = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xFF2E8B84, 0xFF0E5F5C});
+        bar.setCornerRadius(dp(2));
+
+        LayerDrawable ld = new LayerDrawable(new android.graphics.drawable.Drawable[]{track, bar});
+        ld.setId(0, android.R.id.background);
+        ld.setId(1, android.R.id.progress);
+        pbDrawable = ld;
+
+        View v = new View(ctx) {
+            @Override
+            protected void onDraw(Canvas canvas) {
+                // 由 level 控制进度层宽度
+                int w = getWidth();
+                int h = getHeight();
+                if (w <= 0 || pbDrawable == null) return;
+                int pct = getProgressPct();
+                int filled = (int) (w * pct / 100f);
+                pbDrawable.setLevel(pct * 100);
+                // 手动裁剪进度层
+                pbDrawable.setBounds(0, 0, w, h);
+                int sc = canvas.save();
+                canvas.clipRect(0, 0, filled, h);
+                android.graphics.drawable.Drawable prog = pbDrawable.getDrawable(1);
+                if (prog != null) {
+                    prog.setBounds(0, 0, w, h);
+                    prog.draw(canvas);
+                }
+                canvas.restoreToCount(sc);
+                // 底轨
+                android.graphics.drawable.Drawable bg = pbDrawable.getDrawable(0);
+                if (bg != null) {
+                    bg.setBounds(0, 0, w, h);
+                    bg.draw(canvas);
+                }
+                // 进度覆盖在底轨之上再画一次
+                sc = canvas.save();
+                canvas.clipRect(0, 0, filled, h);
+                if (prog != null) {
+                    prog.setBounds(0, 0, w, h);
+                    prog.draw(canvas);
+                }
+                canvas.restoreToCount(sc);
+            }
+        };
+        v.setTag(PROGRESS_TAG, Integer.valueOf(0));
+        return v;
+    }
+
+    /** 进度值读写（CaptionWindow 通过 setProgress 调用，这里劫持）。 */
+    private static final String PROGRESS_TAG = "pb_pct";
+
+    private int getProgressPct() {
+        if (pbLoading == null) return 0;
+        Object o = pbLoading.getTag(PROGRESS_TAG);
+        if (o instanceof Integer) return ((Integer) o).intValue();
+        return 0;
+    }
+
+    /** 供 CaptionWindow 设置进度（0-100）。 */
+    void setProgress(int pct) {
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        if (pbLoading != null) {
+            pbLoading.setTag(PROGRESS_TAG, Integer.valueOf(pct));
+            pbLoading.invalidate();
+        }
+    }
+
+    /** 右下角缩放手柄：斜纹 3 条。 */
+    private View buildHandle() {
+        return new View(ctx) {
+            private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            {
+                p.setColor(0x550E5F5C);
+                p.setStrokeWidth(dp(1.6f));
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeCap(Paint.Cap.ROUND);
+            }
+
+            @Override
+            protected void onDraw(Canvas canvas) {
+                int w = getWidth();
+                int h = getHeight();
+                if (w <= 0 || h <= 0) return;
+                int gap = dp(5);
+                int len = dp(7);
+                // 从右下往左上画 3 条斜线
+                for (int i = 0; i < 3; i++) {
+                    int off = i * gap;
+                    float x2 = w - dp(5) - off;
+                    float y2 = h - dp(5);
+                    float x1 = w - dp(5);
+                    float y1 = h - dp(5) - len - off;
+                    canvas.drawLine(x1, y1, x2 + len, y2 + len, p);
+                }
+            }
+        };
+    }
+
+    // ============================================================
+    //  样式工具
     // ============================================================
 
     /**
-     * 把“用户选的文字颜色”的 alpha 替换成独立的文字透明度设置。
-     * 背景墙透明度（getBgAlpha）只作用于 boxCard，两者互不影响。
+     * 把“用户选的文字颜色”的 alpha 替换成独立的文字透明度设置，
+     * 再乘以一个相对系数（区分定稿行 / 当前行）。
      */
     int applyTextAlpha(int baseColor) {
+        return applyTextAlpha(baseColor, 1f);
+    }
+
+    int applyTextAlpha(int baseColor, float factor) {
         int a = prefs.getTextAlpha();
+        if (a < 0) a = 0;
+        if (a > 255) a = 255;
+        a = Math.round(a * factor);
         if (a < 0) a = 0;
         if (a > 255) a = 255;
         return Color.argb(a, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor));
@@ -179,7 +327,6 @@ final class WindowView {
 
     /**
      * 行距：从 Prefs 读取倍数（默认 1.35）* 100 + 额外 dp 间隙。
-     * 旧代码 setLineSpacing(dp(4), 1f) 第二参数写死 1f 等于行高==字高，会贴在一起。
      */
     void applyLineSpacing(TextView tv) {
         if (tv == null) return;
@@ -198,6 +345,48 @@ final class WindowView {
         return g;
     }
 
+    /** 圆形底（半径=控件一半）。 */
+    GradientDrawable makeCircle(int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(color);
+        return g;
+    }
+
+    /**
+     * 卡片背景：毛玻璃质感。
+     * 由 CaptionWindow 的 refreshStyle() 调用，传入用户底色 / 透明度。
+     * 效果 = 外阴影层 + 顶部高光内边 + 垂直渐变主体 + 底部暗边
+     */
+    void applyCardBackground(int baseColor, int alpha) {
+        if (alpha < 0) alpha = 0;
+        if (alpha > 255) alpha = 255;
+        int r = Color.red(baseColor);
+        int g = Color.green(baseColor);
+        int b = Color.blue(baseColor);
+
+        // 主体：垂直渐变，上亮下暗，模拟玻璃受光
+        int top = Color.argb(alpha, clamp(r + 14), clamp(g + 14), clamp(b + 14));
+        int bottom = Color.argb(alpha, clamp(r - 10), clamp(g - 10), clamp(b - 10));
+        GradientDrawable body = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{top, bottom});
+        body.setCornerRadius(dp(20));
+
+        // 高光内边（顶部一道极细亮线）+ 底部暗边，用 stroke 模拟
+        body.setStroke(dp(1), 0x40FFFFFF);
+
+        // 外阴影层：稍微大一圈的低透明度暗色块，通过 drawable 的 padding 差体现
+        boxCard.setBackground(body);
+        boxCard.setElevation(dp(6));
+        boxCard.setClipToOutline(true);
+    }
+
+    private int clamp(int v) {
+        if (v < 0) return 0;
+        if (v > 255) return 255;
+        return v;
+    }
+
     int dp(float v) {
         float d = 0f;
         try {
@@ -205,7 +394,6 @@ final class WindowView {
         } catch (Throwable ignore) {
         }
         if (d <= 0f) {
-            // density 拿不到（Service 上下文偶发），按 3.0 兜底，避免所有尺寸归零
             try {
                 d = ctx.getResources().getDisplayMetrics().densityDpi / 160f;
             } catch (Throwable ignore) {

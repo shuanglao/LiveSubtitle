@@ -8,7 +8,6 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -24,12 +23,20 @@ import android.widget.Toast;
  */
 public class SettingsActivity extends Activity {
 
-    private static final int C_BG = 0xFFEEF2F1;
-    private static final int C_CARD = 0xFFFFFFFF;
+    // ---------------- v1.6 毛玻璃浅色风配色 ----------------
+    private static final int C_BG_TOP = 0xFFF7FAF9;      // 页面底色（上）
+    private static final int C_BG_BOTTOM = 0xFFEDF2F1;   // 页面底色（下）
+    private static final int C_GLOW = 0x140E5F5C;        // 顶部墨绿光晕
+    private static final int C_CARD = 0xF2FFFFFF;        // 卡片：半透明白
+    private static final int C_CARD_EDGE = 0x66FFFFFF;   // 卡片高光内边
+    private static final int C_CARD_SHADOW = 0x0D0E5F5C; // 卡片模拟投影
     private static final int C_ACCENT = 0xFF0E5F5C;
     private static final int C_TEXT = 0xFF1D2B2A;
     private static final int C_SUB = 0xFF7A8B89;
-    private static final int C_TRACK = 0xFFD7E3E1;
+    private static final int C_TRACK = 0xFFDDE7E5;
+    private static final int C_PILL_BG = 0x0F0E5F5C;     // 数值胶囊底
+    private static final int C_DANGER = 0xFFD9534F;
+    private static final int C_SEG_IDLE = 0x14000000;    // 分段控件未选底
 
     private Prefs prefs;
 
@@ -61,35 +68,51 @@ public class SettingsActivity extends Activity {
     // ============================================================
 
     private void buildUi() {
+        // 外层容器：承载页面底色渐变 + 顶部墨绿光晕
+        FrameLayout page = new FrameLayout(this);
+        page.setBackground(buildPageBackground());
+
         ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(C_BG);
+        sv.setBackgroundColor(Color.TRANSPARENT);
         sv.setFillViewport(true);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(26), dp(20), dp(30));
+        root.setPadding(dp(20), dp(26), dp(20), dp(34));
         sv.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // 标题
+        // 标题区：小字距大字 + 左侧墨绿竖条副标题
         TextView title = new TextView(this);
         title.setText("字幕窗外观");
-        title.setTextSize(24f);
+        title.setTextSize(25f);
         title.setTextColor(C_TEXT);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setLetterSpacing(-0.02f);
         root.addView(title);
+
+        LinearLayout subRow = new LinearLayout(this);
+        subRow.setOrientation(LinearLayout.HORIZONTAL);
+        subRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams subRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        subRowLp.topMargin = dp(8);
+        subRowLp.bottomMargin = dp(16);
+        root.addView(subRow, subRowLp);
+
+        View bar = new View(this);
+        bar.setBackground(rounded(C_ACCENT, 1.5f));
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(dp(3), dp(14));
+        barLp.rightMargin = dp(7);
+        subRow.addView(bar, barLp);
 
         TextView sub = new TextView(this);
         sub.setText("拖动顶部条移动 · 拖右下角改变大小");
-        sub.setTextSize(13f);
+        sub.setTextSize(12.5f);
         sub.setTextColor(C_SUB);
-        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        subLp.topMargin = dp(4);
-        subLp.bottomMargin = dp(18);
-        root.addView(sub, subLp);
+        subRow.addView(sub);
 
         // ---------------- 透明度：背景墙 / 字幕文字（分开控制） ----------------
         LinearLayout card1 = card();
@@ -101,7 +124,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvAlpha.setText("背景墙不透明度    " + val + " / 255");
+                setPill(tvAlpha, val + " / 255");
                 if (fromUser) {
                     prefs.setBgAlpha(val);
                     notifyStyleChanged();
@@ -116,7 +139,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvTAlpha.setText("字幕文字不透明度    " + val + " / 255");
+                setPill(tvTAlpha, val + " / 255");
                 if (fromUser) {
                     prefs.setTextAlpha(val);
                     notifyStyleChanged();
@@ -134,7 +157,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvFont.setText("字号    " + val + " sp");
+                setPill(tvFont, val + " sp");
                 if (fromUser) {
                     prefs.setFontSize((float) val);
                     notifyStyleChanged();
@@ -152,7 +175,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvLines.setText("最多显示行数    " + val + " 行");
+                setPill(tvLines, val + " 行");
                 if (fromUser) {
                     prefs.setMaxLines(val);
                     notifyStyleChanged();
@@ -171,7 +194,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvLs.setText(String.format(java.util.Locale.US, "字幕行间距    %.2f 倍", val / 100f));
+                setPill(tvLs, String.format(java.util.Locale.US, "%.2f 倍", val / 100f));
                 if (fromUser) {
                     prefs.setLineSpacingPct(val);
                     notifyStyleChanged();
@@ -185,7 +208,7 @@ public class SettingsActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvGap.setText("行间额外间隙    " + val + " dp");
+                setPill(tvGap, val + " dp");
                 if (fromUser) {
                     prefs.setLineGapDp(val);
                     notifyStyleChanged();
@@ -263,9 +286,7 @@ public class SettingsActivity extends Activity {
         cardTitle(card6, "显示历史行", "已定稿的旧句子会往上方滚");
 
         Switch swHistory = new Switch(this);
-        swHistory.setText("显示历史行");
-        swHistory.setTextSize(14f);
-        swHistory.setTextColor(C_TEXT);
+        // 标题已在 cardTitle 里显示，这里不再贴文字，避免重复
         swHistory.setChecked(prefs.isShowHistory());
         LinearLayout.LayoutParams swLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -284,34 +305,43 @@ public class SettingsActivity extends Activity {
         root.addView(card7, cardLp());
         cardTitle(card7, "声音来源", "内录对部分 App 可能不可用，会自动降级麦克风");
 
-        final String[] modeNames = {"麦克风（听周围声音）", "内录（抓 App 播放的声音）", "自动（先内录，失败降级）"};
-        LinearLayout modeBox = new LinearLayout(this);
-        modeBox.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams modeLp = new LinearLayout.LayoutParams(
+        final String[] modeNames = {"麦克风", "内录", "自动"};
+        final String[] modeFull = {"麦克风（听周围声音）",
+                "内录（抓 App 播放的声音）",
+                "自动（先内录，失败降级）"};
+
+        // 分段控件：浅墨绿轨道 + 滑动的墨绿实心胶囊
+        LinearLayout seg = new LinearLayout(this);
+        seg.setOrientation(LinearLayout.HORIZONTAL);
+        seg.setBackground(rounded(C_SEG_IDLE, 16));
+        seg.setPadding(dp(4), dp(4), dp(4), dp(4));
+        LinearLayout.LayoutParams segLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        modeLp.topMargin = dp(6);
-        card7.addView(modeBox, modeLp);
+        segLp.topMargin = dp(12);
+        card7.addView(seg, segLp);
 
         int curMode = prefs.getAudioMode();
         for (int i = 0; i < modeNames.length; i++) {
             final int mode = i;
-            Button b = new Button(this);
-            b.setText(modeNames[i]);
-            b.setAllCaps(false);
-            b.setTextSize(14f);
             boolean sel = (curMode == i);
-            b.setTextColor(sel ? Color.WHITE : C_ACCENT);
-            b.setBackground(rounded(sel ? C_ACCENT : C_CARD, 14));
+            TextView b = new TextView(this);
+            b.setText(modeNames[i]);
+            b.setTextSize(13.5f);
+            b.setGravity(Gravity.CENTER);
+            b.setTypeface(null, sel ? android.graphics.Typeface.BOLD
+                    : android.graphics.Typeface.NORMAL);
+            b.setTextColor(sel ? Color.WHITE : C_SUB);
+            b.setBackground(rounded(sel ? C_ACCENT : Color.TRANSPARENT, 12));
             LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-            blp.topMargin = dp(8);
-            modeBox.addView(b, blp);
+                    0, dp(36), 1f);
+            if (i > 0) blp.leftMargin = dp(4);
+            seg.addView(b, blp);
             b.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     prefs.setAudioMode(mode);
                     Toast.makeText(SettingsActivity.this,
-                            "已切换为：" + modeNames[mode] + "（重新开启字幕后生效）",
+                            "已切换为：" + modeFull[mode] + "（重新开启字幕后生效）",
                             Toast.LENGTH_LONG).show();
                     rebuildLater();
                 }
@@ -319,40 +349,87 @@ public class SettingsActivity extends Activity {
         }
 
         // ---------------- 恢复默认位置 ----------------
-        Button btnReset = new Button(this);
-        btnReset.setText("重置字幕窗位置与大小");
-        btnReset.setAllCaps(false);
-        btnReset.setTextSize(15f);
-        btnReset.setTextColor(0xFFD9534F);
-        btnReset.setBackground(rounded(C_CARD, 14));
         LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        resetLp.topMargin = dp(20);
-        root.addView(btnReset, resetLp);
-        btnReset.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                prefs.resetWindowPos();
-                prefs.setWindowWidthDp(0);
-                prefs.setWindowHeightDp(160);
-                Toast.makeText(SettingsActivity.this,
-                        "已重置，重新开启字幕后恢复默认位置", Toast.LENGTH_SHORT).show();
-            }
-        });
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        resetLp.topMargin = dp(18);
+        root.addView(dangerButton("重置字幕窗位置与大小",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        prefs.resetWindowPos();
+                        prefs.setWindowWidthDp(0);
+                        prefs.setWindowHeightDp(160);
+                        Toast.makeText(SettingsActivity.this,
+                                "已重置，重新开启字幕后恢复默认位置",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                }), resetLp);
 
-        setContentView(sv);
+        page.addView(sv, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(page);
     }
 
     // ============================================================
     //  小组件
     // ============================================================
 
+    /**
+     * 页面底色：垂直微渐变 + 顶部墨绿光晕（用叠加层模拟）。
+     */
+    private android.graphics.drawable.Drawable buildPageBackground() {
+        GradientDrawable base = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{C_BG_TOP, C_BG_BOTTOM});
+        base.setCornerRadius(0f);
+
+        // 顶部光晕：一块从墨绿到透明的竖向渐变，贴在屏幕顶部
+        GradientDrawable glow = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{C_GLOW, 0x000E5F5C});
+        glow.setCornerRadius(0f);
+
+        android.graphics.drawable.Drawable[] layers = {base, glow};
+        return new android.graphics.drawable.LayerDrawable(layers);
+    }
+
     private LinearLayout card() {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setPadding(dp(16), dp(16), dp(16), dp(16));
-        c.setBackground(rounded(C_CARD, 16));
+        c.setBackground(cardBackground());
+        if (android.os.Build.VERSION.SDK_INT >= 21) {
+            c.setElevation(dp(2));
+        }
         return c;
+    }
+
+    /**
+     * 卡片背景：半透明白 + 大圆角 + 高光内边 + 偏移 2dp 的模拟投影。
+     * 用 LayerDrawable 叠两层实现（老 android.jar 没有 MaterialCardView 可用）。
+     */
+    private android.graphics.drawable.Drawable cardBackground() {
+        // 投影层：整体下移 2dp 的暗色圆角块
+        GradientDrawable shadow = new GradientDrawable();
+        shadow.setShape(GradientDrawable.RECTANGLE);
+        shadow.setColor(C_CARD_SHADOW);
+        shadow.setCornerRadius(dp(20));
+
+        // 主体层：半透明白 + 1dp 高光内边
+        GradientDrawable body = new GradientDrawable();
+        body.setShape(GradientDrawable.RECTANGLE);
+        body.setColor(C_CARD);
+        body.setCornerRadius(dp(20));
+        body.setStroke(dp(1), C_CARD_EDGE);
+
+        android.graphics.drawable.LayerDrawable ld =
+                new android.graphics.drawable.LayerDrawable(
+                        new android.graphics.drawable.Drawable[]{shadow, body});
+        // 主体上移，仅露出下方 2dp 当投影
+        ld.setLayerInset(0, 0, dp(2), 0, 0);
+        ld.setLayerInset(1, 0, 0, 0, dp(2));
+        return ld;
     }
 
     private LinearLayout.LayoutParams cardLp() {
@@ -363,23 +440,94 @@ public class SettingsActivity extends Activity {
         return lp;
     }
 
+    /**
+     * 卡片标题：左侧标题文字 + 右侧数值胶囊。
+     * value 为空时只显示标题（用于「文字颜色」「背景色调」这类纯色点卡片）。
+     */
+    /**
+     * 卡片标题：左侧标题文字 + 右侧数值胶囊。
+     * value 为空时只显示标题（用于「文字颜色」「背景色调」这类纯色点卡片）。
+     * 返回的 TextView 即标题本身；胶囊挂在其 tag 上，刷新数值用 setPill(tv, ...)。
+     */
     private TextView cardTitle(LinearLayout parent, String label, String value) {
+        boolean hasValue = value != null && value.length() > 0;
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        parent.addView(row);
+
         TextView tv = new TextView(this);
-        tv.setText(value == null || value.length() == 0 ? label : (label + "    " + value));
+        tv.setText(label);
         tv.setTextSize(14.5f);
         tv.setTextColor(C_TEXT);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
-        parent.addView(tv);
+        LinearLayout.LayoutParams tvLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(tv, tvLp);
+
+        if (!hasValue) return tv;
+
+        TextView pill = new TextView(this);
+        pill.setText(value);
+        pill.setTextSize(12f);
+        pill.setTextColor(C_ACCENT);
+        pill.setPadding(dp(9), dp(3), dp(9), dp(3));
+        GradientDrawable pg = new GradientDrawable();
+        pg.setShape(GradientDrawable.RECTANGLE);
+        pg.setColor(C_PILL_BG);
+        pg.setCornerRadius(dp(99));
+        pill.setBackground(pg);
+        row.addView(pill);
+
+        tv.setTag(pill);
         return tv;
+    }
+
+    /**
+     * 刷新卡片标题右侧胶囊的数值。
+     * title 必须是 cardTitle() 返回的那个 TextView。
+     */
+    private void setPill(TextView title, String value) {
+        if (title == null) return;
+        Object tag = title.getTag();
+        if (tag instanceof TextView) {
+            ((TextView) tag).setText(value == null ? "" : value);
+        }
     }
 
     private SeekBar seek(LinearLayout parent, int min, int max, int cur) {
         SeekBar sb = new SeekBar(this);
         sb.setMax(max - min);
         sb.setProgress(cur - min);
+        // 自绘：4dp 浅轨道 + 12dp 墨绿圆拇指；清除系统默认配色
+        sb.setSplitTrack(false);
+        GradientDrawable bgBar = new GradientDrawable();
+        bgBar.setCornerRadius(dp(2));
+        bgBar.setColor(C_TRACK);
+        GradientDrawable pgBar = new GradientDrawable();
+        pgBar.setCornerRadius(dp(2));
+        pgBar.setColor(C_ACCENT);
+        android.graphics.drawable.LayerDrawable track =
+                new android.graphics.drawable.LayerDrawable(
+                        new android.graphics.drawable.Drawable[]{bgBar, pgBar});
+        track.setId(0, android.R.id.background);
+        track.setId(1, android.R.id.progress);
+        // 上下各内缩 7dp，让 4dp 细条居中于 34dp 触摸区
+        track.setLayerInset(0, 0, dp(7), 0, dp(7));
+        track.setLayerInset(1, 0, dp(7), 0, dp(7));
+        sb.setProgressDrawable(track);
+
+        GradientDrawable thumb = new GradientDrawable();
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setColor(C_ACCENT);
+        thumb.setStroke(dp(2), 0xFFFFFFFF);
+        thumb.setSize(dp(16), dp(16));
+        sb.setThumb(thumb);
+        sb.setThumbOffset(0);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(34));
+        lp.topMargin = dp(6);
         parent.addView(sb, lp);
         return sb;
     }
@@ -407,16 +555,54 @@ public class SettingsActivity extends Activity {
 
     private View colorDot(final int color, boolean selected) {
         View v = new View(this);
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.OVAL);
-        g.setColor(color);
         if (selected) {
-            g.setStroke(dp(3), C_ACCENT);
+            // 选中：外墨绿环 + 白色间隙 + 中间实色，三层同心圆
+            GradientDrawable outer = new GradientDrawable();
+            outer.setShape(GradientDrawable.OVAL);
+            outer.setColor(0x00000000);
+            outer.setStroke(dp(2), C_ACCENT);
+
+            GradientDrawable gapRing = new GradientDrawable();
+            gapRing.setShape(GradientDrawable.OVAL);
+            gapRing.setColor(0xFFFFFFFF);
+
+            GradientDrawable inner = new GradientDrawable();
+            inner.setShape(GradientDrawable.OVAL);
+            inner.setColor(color);
+
+            android.graphics.drawable.LayerDrawable ld =
+                    new android.graphics.drawable.LayerDrawable(
+                            new android.graphics.drawable.Drawable[]{outer, gapRing, inner});
+            int gap = dp(3);
+            ld.setLayerInset(0, 0, 0, 0, 0);
+            ld.setLayerInset(1, gap, gap, gap, gap);
+            ld.setLayerInset(2, gap + dp(2), gap + dp(2), gap + dp(2), gap + dp(2));
+            v.setBackground(ld);
         } else {
-            g.setStroke(dp(1), 0x33000000);
+            GradientDrawable g = new GradientDrawable();
+            g.setShape(GradientDrawable.OVAL);
+            g.setColor(color);
+            g.setStroke(dp(1), 0x1A000000);
+            v.setBackground(g);
         }
-        v.setBackground(g);
         return v;
+    }
+
+    /** 危险操作按钮：透明底 + 1dp 红描边 + 红字（比实心红按钮更轻） */
+    private TextView dangerButton(String text, View.OnClickListener l) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextSize(14f);
+        b.setGravity(Gravity.CENTER);
+        b.setTextColor(C_DANGER);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.RECTANGLE);
+        g.setColor(0x00000000);
+        g.setStroke(dp(1), C_DANGER);
+        g.setCornerRadius(dp(14));
+        b.setBackground(g);
+        b.setOnClickListener(l);
+        return b;
     }
 
     private GradientDrawable rounded(int color, float rDp) {
