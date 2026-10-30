@@ -29,6 +29,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     public static final String ACTION_STOP = "com.along.livesubtitle.STOP";
     public static final String ACTION_REFRESH_STYLE = "com.along.livesubtitle.REFRESH_STYLE";
     public static final String ACTION_TOGGLE_LOCK = "com.along.livesubtitle.TOGGLE_LOCK";
+    /** 通知栏：显示/隐藏字幕窗（窗口穿透或挡屏时仍能唤回） */
+    public static final String ACTION_TOGGLE_SHOW = "com.along.livesubtitle.TOGGLE_SHOW";
 
     private static final String CHANNEL_ID = "live_subtitle";
     /** PendingIntent 不可变标志（Android 12+ 必需，否则点击无响应） */
@@ -41,6 +43,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     private boolean running = false;
     /** 记录上一个是否是「真实用户触发」的 START；用于识别 START_STICKY 僵尸重启 */
     private boolean userStarted = false;
+    /** 用户通过通知栏手动隐藏了窗口（穿透后仍可唤回，与锁定状态独立） */
+    private boolean hiddenByUser = false;
     private long aliveAt = System.currentTimeMillis();
 
     // ============================================================
@@ -138,12 +142,44 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             return START_STICKY;
         }
         if (ACTION_TOGGLE_LOCK.equals(action)) {
-            if (window != null && window.isShowing()) {
-                boolean next = !window.isLocked();
-                window.setInitialLocked(next);
-                prefs.setLocked(next);
-                updateNotification(next);
+            // 通知栏解锁/锁定：窗口可能被“隐藏”了，隐藏时也允许改状态，
+            // 这样即使窗口不可见，用户仍能从通知栏把 locked 复位，避免锁死。
+            boolean next = window != null ? !window.isLocked() : !prefs.isLockedRemembered();
+            if (window != null) window.setInitialLocked(next);
+            prefs.setLocked(next);
+            logf("ACTION_TOGGLE_LOCK -> locked=" + next + " (window=" + (window != null)
+                    + ", showing=" + (window != null && window.isShowing()) + ")");
+            updateNotification(next);
+            toast(next ? "已锁定：触摸穿透，解锁请点通知栏" : "已解锁：可拖动调整");
+            return START_STICKY;
+        }
+        if (ACTION_TOGGLE_SHOW.equals(action)) {
+            // 通知栏显示/隐藏：锁定穿透后窗口看不见也摸不到，这里是唯一可靠的唤回入口。
+            if (window == null) {
+                logf("ACTION_TOGGLE_SHOW ignored (window==null)");
+                return START_STICKY;
             }
+            boolean nowShowing = window.isShowing() && !hiddenByUser;
+            if (nowShowing) {
+                hiddenByUser = true;
+                try {
+                    window.hide();
+                } catch (Throwable t) {
+                    logf("ACTION_TOGGLE_SHOW hide FAILED: " + Log.getStackTraceString(t));
+                }
+                logf("ACTION_TOGGLE_SHOW -> hidden by user");
+                toast("字幕窗已隐藏，点通知栏可唤回");
+            } else {
+                hiddenByUser = false;
+                try {
+                    window.setInitialLocked(prefs.isLockedRemembered());
+                    window.show();
+                } catch (Throwable t) {
+                    logf("ACTION_TOGGLE_SHOW show FAILED: " + Log.getStackTraceString(t));
+                }
+                logf("ACTION_TOGGLE_SHOW -> shown (locked=" + prefs.isLockedRemembered() + ")");
+            }
+            updateNotification(window.isLocked());
             return START_STICKY;
         }
         // ACTION_START：真实用户触发
@@ -423,20 +459,34 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     }
 
     private Notification buildNotification(boolean locked) {
+        boolean showing = window != null && window.isShowing() && !hiddenByUser;
         Intent open = new Intent(this, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent piOpen = PendingIntent.getActivity(
                 this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
-
         Intent lock = new Intent(this, CaptionService.class);
         lock.setAction(ACTION_TOGGLE_LOCK);
         PendingIntent piLock = PendingIntent.getService(
                 this, 1, lock, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
-
         Intent stop = new Intent(this, CaptionService.class);
         stop.setAction(ACTION_STOP);
         PendingIntent piStop = PendingIntent.getService(
                 this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
+        Intent showHide = new Intent(this, CaptionService.class);
+        showHide.setAction(ACTION_TOGGLE_SHOW);
+        PendingIntent piShowHide = PendingIntent.getService(
+                this, 3, showHide, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
+
+        String text;
+        if (locked && showing) {
+            text = "已锁定（触摸穿透）· 解锁请点下方按钮";
+        } else if (locked && !showing) {
+            text = "已锁定且窗口隐藏 · 点「显示」唤回";
+        } else if (!locked && !showing) {
+            text = "窗口已隐藏 · 点「显示」唤回";
+        } else {
+            text = "未锁定，可拖动调整";
+        }
 
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
@@ -444,17 +494,18 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         } else {
             b = new Notification.Builder(this);
         }
-
         b.setContentTitle("实时字幕运行中")
-                .setContentText(locked ? "字幕窗已锁定（触摸穿透）" : "字幕窗未锁定，可拖动调整")
+                .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setContentIntent(piOpen)
                 .setOngoing(true)
                 .setPriority(Notification.PRIORITY_LOW)
                 .addAction(android.R.drawable.ic_lock_lock,
                         locked ? "解锁" : "锁定", piLock)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止", piStop);
-
+                .addAction(android.R.drawable.ic_menu_view,
+                        showing ? "隐藏" : "显示", piShowHide)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel,
+                        "停止", piStop);
         return b.build();
     }
 

@@ -108,6 +108,7 @@ public class CaptionWindow {
     private TextView tvBody;        // 临时（正在说）的文字
     private LinearLayout barTop;
     private TextView tvLockBtn;
+    private TextView tvClose;
     private TextView dragIcon;
     private View handle;
 
@@ -306,7 +307,7 @@ public class CaptionWindow {
         barTop.addView(tvLockBtn, lockLp);
 
         // 关闭按钮
-        TextView tvClose = new TextView(ctx);
+        tvClose = new TextView(ctx);
         tvClose.setText("×");
         tvClose.setTextSize(16f);
         tvClose.setTextColor(0xFF9A9A9A);
@@ -564,13 +565,20 @@ public class CaptionWindow {
             tvLockBtn.setTextColor(v ? 0xFF9A9A9A : 0xFF0E5F5C);
             tvLockBtn.setBackground(makePill(v ? 0xFFEEEEEE : 0xFFD6EDEC));
         }
-        // 锁定时只隐藏拖动手柄和缩放手柄，锁定/关闭按钮保持可见，
-        // 保证任何时候都能从屏幕上点回“解锁”（避免锁死后找不到出口）
+        // 锁定时隐藏所有窗口内交互件（拖动/缩放/解锁/关闭），全窗触摸穿透，
+        // 解锁统一走通知栏 ACTION_TOGGLE_LOCK（窗口级 FLAG_NOT_TOUCHABLE 收不到触摸，
+        // 窗口内按钮即使画出来也点不到，必须靠通知栏这条系统通道）
         if (dragIcon != null) {
             dragIcon.setVisibility(v ? View.GONE : View.VISIBLE);
         }
         if (handle != null) {
             handle.setVisibility(v ? View.GONE : View.VISIBLE);
+        }
+        if (tvLockBtn != null) {
+            tvLockBtn.setVisibility(v ? View.GONE : View.VISIBLE);
+        }
+        if (tvClose != null) {
+            tvClose.setVisibility(v ? View.GONE : View.VISIBLE);
         }
 
         if (touchMode && added) {

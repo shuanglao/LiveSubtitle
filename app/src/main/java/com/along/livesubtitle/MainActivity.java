@@ -51,6 +51,18 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = new Prefs(this);
+        // 开门兜底：打开主界面即自动解锁。
+        // 锁定时窗口全穿透、窗口内按钮均不可见，万一通知栏入口被系统归档，
+        // 用户只需重新打开 App 即可脱困，避免彻底锁死。
+        try {
+            if (prefs.isLockedRemembered()) {
+                prefs.setLocked(false);
+                Intent svc = new Intent(this, CaptionService.class);
+                svc.setAction(CaptionService.ACTION_REFRESH_STYLE);
+                startService(svc);
+            }
+        } catch (Throwable ignore) {
+        }
         try {
             buildUi();
         } catch (Throwable t) {
