@@ -537,7 +537,7 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                 .addAction(android.R.drawable.ic_menu_view,
                         showing ? "隐藏" : "显示", piShowHide)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel,
-                        "停止", piStop),
+                        "停止", piStop)
                 .addAction(android.R.drawable.ic_menu_rotate,
                         "重启", piRestart);
         return b.build();
