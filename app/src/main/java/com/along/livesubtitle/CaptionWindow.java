@@ -112,6 +112,8 @@ public class CaptionWindow {
     private ScrollView scv;         // 历史记录滚动容器（可上下滑动查看）
     private TextView tvBody;        // 临时（正在说）的文字
     private ProgressBar pbLoading;   // 模型下载/引擎准备进度条（不确定态用转圈）
+    /** 引擎处于准备阶段（下载/加载/等待）时为 true，此时进度条可见。出字幕或就绪后必须置 false */
+    private boolean engineBusy = false;
     private LinearLayout barTop;
     private TextView tvLockBtn;
     private TextView tvClose;
@@ -657,6 +659,11 @@ public class CaptionWindow {
 
     private void applyTextToViews() {
         if (tvFinal == null || tvBody == null) return;
+        // 出字幕/界面重绘即代表引擎已就绪，收掉准备态进度条
+        if (engineBusy) {
+            engineBusy = false;
+            hideProgress();
+        }
 
         if (prefs.isShowHistory() && !finalLines.isEmpty()) {
             StringBuilder sb = new StringBuilder();
@@ -703,28 +710,69 @@ public class CaptionWindow {
      * 引擎准备阶段状态回调（由 CaptionService 的 onStatus 转发而来）。
      * pct>=0 走确定进度条；pct<0 走不确定态（转圈）；level==1 表示就绪，收起进度条。
      */
+    /** 收起进度条（统一出口，避免残留） */
+    private void hideProgress() {
+        if (pbLoading != null) pbLoading.setVisibility(View.GONE);
+    }
+
+    /** 判定某条状态文案是否属于“运行时状态”（静音/恢复/聆听），这类不应弹进度条 */
+    private boolean isRuntimeStateText(String msg) {
+        if (msg == null) return false;
+        return msg.indexOf("已静音") >= 0
+                || msg.indexOf("恢复") >= 0
+                || msg.indexOf("聆听") >= 0
+                || msg.indexOf("等待声音") >= 0;
+    }
     public void onEngineStatus(final String msg, final int pct, final int level) {
         ui.post(new Runnable() {
             @Override public void run() {
                 if (tvBody == null) return;
+                // level: 0=普通状态 1=就绪(开始聆听) 2=错误
                 if (level == 1) {
-                    // 就绪：收起进度条，恢复提示文字
-                    if (pbLoading != null) pbLoading.setVisibility(View.GONE);
+                    // 就绪：不管之前是什么，进度条一律收起
+                    engineBusy = false;
+                    hideProgress();
+                    tvBody.setVisibility(View.VISIBLE);
                     tvBody.setText("正在聆听…");
                     tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x66FFFFFF);
                     return;
                 }
-                if (pbLoading != null) {
-                    pbLoading.setVisibility(View.VISIBLE);
-                    if (pct >= 0) {
+                if (level == 2) {
+                    // 错误：收起进度条，红字提示
+                    engineBusy = false;
+                    hideProgress();
+                    tvBody.setVisibility(View.VISIBLE);
+                    tvBody.setTextColor(0xFFFF6B6B);
+                    tvBody.setText(pct >= 0 ? (msg + " " + pct + "%") : msg);
+                    return;
+                }
+                // ---- level == 0：只有"下载/加载/准备"这类才显示进度条 ----
+                boolean downloading = pct >= 0;
+                if (downloading) {
+                    // 确定态进度：显示进度条并把百分比压进文字
+                    engineBusy = true;
+                    if (pbLoading != null) {
+                        pbLoading.setVisibility(View.VISIBLE);
                         pbLoading.setIndeterminate(false);
                         pbLoading.setProgress(pct);
+                    }
+                } else {
+                    // 无百分比：可能是"首次启动正在下载"（转圈）也可能是"已静音/已恢复"这种通知
+                    // 用关键字区分：静音/恢复/聆听 属于运行时状态，绝不能弹进度条
+                    boolean runtimeState = isRuntimeStateText(msg);
+                    if (runtimeState) {
+                        engineBusy = false;
+                        hideProgress();
                     } else {
-                        pbLoading.setIndeterminate(true);
+                        engineBusy = true;
+                        if (pbLoading != null) {
+                            pbLoading.setVisibility(View.VISIBLE);
+                            pbLoading.setIndeterminate(true);
+                        }
                     }
                 }
                 tvBody.setVisibility(View.VISIBLE);
-                tvBody.setTextColor(level == 2 ? 0xFFFF6B6B : (applyTextAlpha(0xFFFFFFFF) & 0x99FFFFFF));
+                tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x99FFFFFF);
                 tvBody.setText(pct >= 0 ? (msg + " " + pct + "%") : msg);
             }
         });
@@ -737,6 +785,9 @@ public class CaptionWindow {
                 tvBody.setVisibility(View.VISIBLE);
                 tvBody.setTextColor(0xFFFF6B6B);
                 tvBody.setText(text);
+                // 错误提示是终态，顺手收掉准备态进度条
+                engineBusy = false;
+                hideProgress();
             }
         });
     }
