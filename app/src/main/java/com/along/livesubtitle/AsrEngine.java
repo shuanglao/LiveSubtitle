@@ -20,6 +20,13 @@ public interface AsrEngine {
 
         /** 音量变化 0.0~1.0，用于绘制音量指示 */
         void onVolume(float level);
+        /**
+         * 准备阶段结构化状态（下载模型 / 拷贝模型 / 加载引擎 等）。
+         * @param msg   人话描述，直接显示给用户
+         * @param pct   进度百分比 0~100；-1 表示进度未知（转圈/不确定态）
+         * @param level 0=普通信息 1=就绪完成 2=错误
+         */
+        void onStatus(String msg, int pct, int level);
     }
 
     /** 开始识别 */

@@ -333,6 +333,11 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             public void onVolume(float level) {
                 // 预留：可选在窗口上画音量条
             }
+            @Override
+            public void onStatus(String msg, int pct, int level) {
+                logf("STATUS pct=" + pct + " level=" + level + " msg=" + msg);
+                if (window != null) window.onEngineStatus(msg, pct, level);
+            }
         });
     }
 

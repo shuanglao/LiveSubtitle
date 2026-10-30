@@ -47,6 +47,14 @@ public class SherpaAsrEngine implements AsrEngine {
     /** 每次读取的音频时长（秒） */
     private static final float INTERVAL_SEC = 0.1f;
     /** endpoint 后补的静音时长（秒），用于捞回尾字 */
+    /** 静音判定阈值（RMS 归一化后），约 -38dB：低于此值视为没人说话 */
+    private static final float SILENCE_LEVEL = 0.012f;
+    /** 连续静音超过这么多秒才进入暂停（避免句中换气被误判） */
+    private static final float SILENCE_HOLD_SEC = 6.0f;
+    /** 当前是否处于「静音暂停」态：停止向识别器喂数据以省电 */
+    private volatile boolean pausedBySilence = false;
+    /** 已连续静音的秒数累计 */
+    private float silenceAccum = 0f;
     private static final float TAIL_PADDING_SEC = 0.8f;
 
     private final Context context;
@@ -388,8 +396,9 @@ public class SherpaAsrEngine implements AsrEngine {
                 if (now - lastEmit > 800) {
                     lastEmit = now;
                     int pct = total > 0 ? (int) (done * 100 / total) : -1;
-                    emitStatus("\u4e0b\u8f7d\u4e2d " + (done / 1048576) + "MB"
-                            + (pct >= 0 ? " / " + pct + "%" : ""));
+                    emitStatus("正在下载语音模型 "
+                            + (done / 1048576) + "MB / " + (total / 1048576) + "MB",
+                            pct, 0);
                 }
             }
             os.flush();
@@ -416,13 +425,17 @@ public class SherpaAsrEngine implements AsrEngine {
         }
     }
 
-    /** 向界面回报准备阶段状态 */
+    /** 向界面回报准备阶段状态（无百分比）*/
     private void emitStatus(String msg) {
-        Log.i(TAG, "status: " + msg);
+        emitStatus(msg, -1, 0);
+    }
+    /** 向界面回报结构化状态：文案 + 百分比 + 级别 */
+    private void emitStatus(String msg, int pct, int level) {
+        Log.i(TAG, "status[" + pct + "%," + level + "]: " + msg);
         AsrEngine.Callback cb = callback;
         if (cb != null) {
             try {
-                cb.onResult("\u23f3 " + msg, false);
+                cb.onStatus(msg, pct, level);
             } catch (Throwable ignore) {
             }
         }
@@ -587,8 +600,28 @@ public class SherpaAsrEngine implements AsrEngine {
                 continue;
             }
 
-            emitVolume(calcLevel(buffer, n));
-
+            float lvl = calcLevel(buffer, n);
+            emitVolume(lvl);
+            // ---- 静音检测：连续 SILENCE_HOLD_SEC 秒无声则暂停喂流（降功耗）----
+            if (lvl < SILENCE_LEVEL) {
+                silenceAccum += INTERVAL_SEC;
+                if (!pausedBySilence && silenceAccum >= SILENCE_HOLD_SEC) {
+                    pausedBySilence = true;
+                    elog("silence pause after " + (int) silenceAccum + "s");
+                    emitStatus("已静音，等待声音…");
+                }
+            } else {
+                silenceAccum = 0f;
+                if (pausedBySilence) {
+                    pausedBySilence = false;
+                    elog("silence resume");
+                    emitStatus("已恢复听写");
+                }
+            }
+            if (pausedBySilence) {
+                // 暂停期间只读音频丢弃，不做解码，CPU 占用接近 0
+                continue;
+            }
             for (int i = 0; i < n; i++) {
                 samples[i] = buffer[i] / 32768.0f;
             }

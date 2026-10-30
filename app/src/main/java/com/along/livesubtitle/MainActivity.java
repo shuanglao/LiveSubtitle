@@ -40,6 +40,8 @@ public class MainActivity extends Activity {
      *  用独立标志位而不是 !prefs.isEnabled() 判断，避免与 toggleCaption()
      *  内部的启停分支互相竞态，误走停止分支把自己的 enabled 抹掉。 */
     private boolean pendingStart = false;
+    /** 点了「开启字幕」到引擎真正就绪之间的过渡态：按钮显示「准备中…」并禁用 */
+    private boolean busy = false;
     private static final String NL = String.valueOf((char) 10);
 
     private Prefs prefs;
@@ -330,6 +332,16 @@ public class MainActivity extends Activity {
         tvAudioState.setTextColor(audio ? 0xFF2E9E5B : 0xFFD9534F);
         btnAudio.setVisibility(audio ? View.GONE : View.VISIBLE);
 
+        if (busy) {
+            btnToggle.setText("准备中…");
+            btnToggle.setEnabled(false);
+            btnToggle.setAlpha(0.65f);
+            btnToggle.setTextColor(Color.WHITE);
+            btnToggle.setBackground(rounded(0xFF8AA8A6, 26));
+            return;
+        }
+        btnToggle.setEnabled(true);
+        btnToggle.setAlpha(1f);
         boolean on = prefs.isEnabled();
         btnToggle.setText(on ? "停止字幕" : "开启字幕");
         btnToggle.setBackground(rounded(on ? 0xFFD9534F : C_ACCENT, 26));
@@ -418,6 +430,19 @@ public class MainActivity extends Activity {
                 startService(svc);
             }
             prefs.setEnabled(true);
+            // 进入过渡态：模型下载 + 引擎加载可能几十秒，按钮先给出明确反馈
+            busy = true;
+            refreshState();
+            // 兜底：8 秒后无论如何解除，避免异常路径把按钮永久卡在「准备中」
+            btnToggle.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (busy) {
+                        busy = false;
+                        refreshState();
+                    }
+                }
+            }, 8000);
         }
         // 稍微延迟再刷新，等服务真正起来
         btnToggle.postDelayed(new Runnable() {

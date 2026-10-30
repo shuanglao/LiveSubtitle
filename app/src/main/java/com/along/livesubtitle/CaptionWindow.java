@@ -23,6 +23,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.ScrollView;
 
@@ -110,6 +111,7 @@ public class CaptionWindow {
     private boolean broadcastNewLine = false;
     private ScrollView scv;         // 历史记录滚动容器（可上下滑动查看）
     private TextView tvBody;        // 临时（正在说）的文字
+    private ProgressBar pbLoading;   // 模型下载/引擎准备进度条（不确定态用转圈）
     private LinearLayout barTop;
     private TextView tvLockBtn;
     private TextView tvClose;
@@ -356,6 +358,15 @@ public class CaptionWindow {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
         boxCard.addView(tvBody, bodyLp);
+        // ---- 准备阶段进度条（默认隐藏，onEngineStatus 驱动）----
+        pbLoading = new ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal);
+        pbLoading.setMax(100);
+        pbLoading.setProgress(0);
+        pbLoading.setVisibility(View.GONE);
+        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(3));
+        pbLp.topMargin = dp(4);
+        boxCard.addView(pbLoading, pbLp);
 
         // ---- 右下角缩放手柄 ----
         handle = new View(ctx);
@@ -688,6 +699,36 @@ public class CaptionWindow {
         }
     }
 
+    /**
+     * 引擎准备阶段状态回调（由 CaptionService 的 onStatus 转发而来）。
+     * pct>=0 走确定进度条；pct<0 走不确定态（转圈）；level==1 表示就绪，收起进度条。
+     */
+    public void onEngineStatus(final String msg, final int pct, final int level) {
+        ui.post(new Runnable() {
+            @Override public void run() {
+                if (tvBody == null) return;
+                if (level == 1) {
+                    // 就绪：收起进度条，恢复提示文字
+                    if (pbLoading != null) pbLoading.setVisibility(View.GONE);
+                    tvBody.setText("正在聆听…");
+                    tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x66FFFFFF);
+                    return;
+                }
+                if (pbLoading != null) {
+                    pbLoading.setVisibility(View.VISIBLE);
+                    if (pct >= 0) {
+                        pbLoading.setIndeterminate(false);
+                        pbLoading.setProgress(pct);
+                    } else {
+                        pbLoading.setIndeterminate(true);
+                    }
+                }
+                tvBody.setVisibility(View.VISIBLE);
+                tvBody.setTextColor(level == 2 ? 0xFFFF6B6B : (applyTextAlpha(0xFFFFFFFF) & 0x99FFFFFF));
+                tvBody.setText(pct >= 0 ? (msg + " " + pct + "%") : msg);
+            }
+        });
+    }
     /** 在字幕区显示一行状态（引擎错误/下载进度等），让用户能看见程序在干什么 */
     public void setStatusText(final String text) {
         ui.post(new Runnable() {

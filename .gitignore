@@ -18,3 +18,7 @@ app/libs/*.aar
 
 *.zip
 /lsx*/
+*.out
+p*.py
+chk.py
+dl/
