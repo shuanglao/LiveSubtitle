@@ -314,6 +314,8 @@ public class CaptionWindow {
                         downLpX = lp.x;
                         downLpY = lp.y;
                         dragging = true;
+                        wlog("[drag] DOWN raw=" + e.getRawX() + "," + e.getRawY()
+                                + " barTopW=" + v.getWidth() + " lp=" + lp.x + "," + lp.y);
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         if (!dragging) return false;
@@ -332,10 +334,9 @@ public class CaptionWindow {
                 return false;
             }
         };
-        // v1.7：顶部条整条可按住拖动 —— 回到最朴素的原生监听写法。
-        //       setClickable(true) 是关键：LinearLayout 默认 clickable=false，
-        //       空白区域收到 DOWN 后若无人消费会返回 false，导致后续 MOVE 不再派发，
-        //       表现就是"按下去没反应"。设成 true 让它稳稳吃掉整串手势。
+        // v1.9：barTop 现在是整行透明热区（MATCH_PARENT），白胶囊在内部的 barPill 里。
+        //       左半边那片空白也属于 barTop，所以这里挂监听就能整行拖。
+        //       setClickable(true) 保留：确保空白处 DOWN 一定被消费。
         barTop.setClickable(true);
         barTop.setLongClickable(false);
         barTop.setOnTouchListener(dragTouch);

@@ -37,6 +37,8 @@ final class WindowView {
     final FrameLayout root;
     final LinearLayout boxCard;
     final LinearLayout barTop;
+    /** v1.9：白胶囊本体（挂在 barTop 内、靠右显示），barTop 自身是整行透明热区 */
+    final LinearLayout barPill;
     final TextView dragIcon;
     final TextView tvLockBtn;
     final TextView tvClose;
@@ -73,26 +75,36 @@ final class WindowView {
         cardLp.setMargins(sh, sh / 2, sh, sh);
         root.addView(boxCard, cardLp);
 
-        // ---- 顶部操作条（浮动胶囊，贴右上角）----
-        // v1.7：整条空白区域都可按住拖动（在 CaptionWindow 里挂 touch 监听）；
-        //       内部按钮（锁定 / 关闭）仍是子 View，点击会优先由它们消费。
+        // ---- 顶部操作条（整行热区，胶囊贴右上角）----
+        // v1.8：barTop 铺满整行（MATCH_PARENT）当拖动热区，
+        //       真正的白胶囊是里面的 barPill（WRAP_CONTENT + 靠右），
+        //       这样胶囊左边那片空白也能按住拖动。
         barTop = new LinearLayout(ctx);
         barTop.setOrientation(LinearLayout.HORIZONTAL);
-        barTop.setGravity(Gravity.CENTER_VERTICAL);
-        barTop.setPadding(dp(6), dp(3), dp(6), dp(3));
-        // 浮动胶囊底：半透明白 + 细边 + 大圆角
+        barTop.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        barTop.setPadding(0, 0, 0, dp(6));
+        // 整行热区不加背景（透明），背景交给内部 barPill
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        boxCard.addView(barTop, barLp);
+
+        // ---- 白胶囊（视觉上的那颗，靠右）----
+        barPill = new LinearLayout(ctx);
+        barPill.setOrientation(LinearLayout.HORIZONTAL);
+        barPill.setGravity(Gravity.CENTER_VERTICAL);
+        barPill.setPadding(dp(6), dp(3), dp(6), dp(3));
         GradientDrawable pillBg = new GradientDrawable();
         pillBg.setColor(0xCCFFFFFF);
         pillBg.setCornerRadius(dp(20));
         pillBg.setStroke(dp(1), 0x55FFFFFF);
-        barTop.setBackground(pillBg);
-        barTop.setElevation(dp(2));
-        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+        barPill.setBackground(pillBg);
+        barPill.setElevation(dp(2));
+        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        barLp.gravity = Gravity.END;
-        barLp.bottomMargin = dp(6);
-        boxCard.addView(barTop, barLp);
+        pillLp.gravity = Gravity.CENTER_VERTICAL;
+        barTop.addView(barPill, pillLp);
 
         // 拖动手柄：6 点阵（两列三点），比 ⠿ 更纤细克制
         dragIcon = new TextView(ctx);
@@ -106,7 +118,7 @@ final class WindowView {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
         dragLp.gravity = Gravity.CENTER_VERTICAL;
-        barTop.addView(dragIcon, dragLp);
+        barPill.addView(dragIcon, dragLp);
 
         // 分隔线（胶囊内细竖线）
         View vDiv = new View(ctx);
@@ -117,7 +129,7 @@ final class WindowView {
         LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(dp(1), dp(12));
         divLp.rightMargin = dp(4);
         divLp.gravity = Gravity.CENTER_VERTICAL;
-        barTop.addView(vDiv, divLp);
+        barPill.addView(vDiv, divLp);
 
         // 锁定按钮：圆形半透明图标
         tvLockBtn = new TextView(ctx);
@@ -129,7 +141,7 @@ final class WindowView {
         LinearLayout.LayoutParams lockLp = new LinearLayout.LayoutParams(dp(30), dp(30));
         lockLp.rightMargin = dp(4);
         lockLp.gravity = Gravity.CENTER_VERTICAL;
-        barTop.addView(tvLockBtn, lockLp);
+        barPill.addView(tvLockBtn, lockLp);
 
         // 关闭按钮（单击无效，长按才关，防误触）
         tvClose = new TextView(ctx);
@@ -142,7 +154,7 @@ final class WindowView {
         tvClose.setMinHeight(dp(30));
         LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(30), dp(30));
         closeLp.gravity = Gravity.CENTER_VERTICAL;
-        barTop.addView(tvClose, closeLp);
+        barPill.addView(tvClose, closeLp);
 
         // ---- 已定稿文（放进 ScrollView，历史可上下滑动）----
         scv = new ScrollView(ctx);
