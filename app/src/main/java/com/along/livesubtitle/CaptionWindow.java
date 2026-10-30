@@ -114,8 +114,8 @@ public class CaptionWindow {
     private View pbLoading;   // 模型下载/引擎准备进度条（自绘细条，v1.6 毛玻璃）
     /** 引擎处于准备阶段（下载/加载/等待）时为 true，此时进度条可见。出字幕或就绪后必须置 false */
     private boolean engineBusy = false;
-    /** 顶部操作条（DragBarLayout：整条可按住拖动，按钮区域自动放行） */
-    private WindowView.DragBarLayout barTop;
+    /** 顶部操作条（整条可按住拖动，按钮区域自动放行） */
+    private LinearLayout barTop;
     private TextView tvLockBtn;
     private TextView tvClose;
     private TextView dragIcon;
@@ -332,10 +332,13 @@ public class CaptionWindow {
                 return false;
             }
         };
-        dragIcon.setOnTouchListener(dragTouch);
-        // v1.7：顶部条改用 DragBarLayout 的拦截式拖动 —— 整条空白区域都能拖，
-        //       但锁定 / 关闭按钮区域不拦截，点击照常生效。
-        barTop.setDragTouchListener(dragTouch);
+        // v1.7：顶部条整条可按住拖动 —— 回到最朴素的原生监听写法。
+        //       setClickable(true) 是关键：LinearLayout 默认 clickable=false，
+        //       空白区域收到 DOWN 后若无人消费会返回 false，导致后续 MOVE 不再派发，
+        //       表现就是"按下去没反应"。设成 true 让它稳稳吃掉整串手势。
+        barTop.setClickable(true);
+        barTop.setLongClickable(false);
+        barTop.setOnTouchListener(dragTouch);
 
         // 右下角缩放
         handle.setOnTouchListener(new View.OnTouchListener() {
