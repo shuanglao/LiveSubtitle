@@ -24,6 +24,7 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.ScrollView;
 
 import java.util.ArrayList;
 
@@ -105,6 +106,9 @@ public class CaptionWindow {
     private FrameLayout root;
     private LinearLayout boxCard;   // 背景卡片
     private TextView tvFinal;       // 已定稿文字
+    /** 新台词到来时强制滚底一次 */
+    private boolean broadcastNewLine = false;
+    private ScrollView scv;         // 历史记录滚动容器（可上下滑动查看）
     private TextView tvBody;        // 临时（正在说）的文字
     private LinearLayout barTop;
     private TextView tvLockBtn;
@@ -320,21 +324,32 @@ public class CaptionWindow {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        // ---- 已定稿文字 ----
+        // ---- 已定稿文（放进 ScrollView，历史可上下滑动）----
+        scv = new ScrollView(ctx);
+        scv.setVerticalScrollBarEnabled(false);
+        scv.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        scv.setFillViewport(false);
+        LinearLayout.LayoutParams scvLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0, 1f);
+        scvLp.bottomMargin = dp(4);
+        boxCard.addView(scv, scvLp);
+
         tvFinal = new TextView(ctx);
         tvFinal.setTextColor(0xCCFFFFFF);
         tvFinal.setTextSize(prefs.getFontSize());
-        tvFinal.setLineSpacing(dp(4), 1f);
-        LinearLayout.LayoutParams finalLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f);
-        boxCard.addView(tvFinal, finalLp);
+        applyLineSpacing(tvFinal);
+        // 高度 WRAP_CONTENT：让内容自然撑开，ScrollView 才有东西可滚
+        ScrollView.LayoutParams finalLp = new ScrollView.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        scv.addView(tvFinal, finalLp);
 
         // ---- 临时文字（正在说的话，高亮）----
         tvBody = new TextView(ctx);
         tvBody.setTextColor(prefs.getTextColor());
         tvBody.setTextSize(prefs.getFontSize());
-        tvBody.setLineSpacing(dp(4), 1f);
+        applyLineSpacing(tvBody);
         tvBody.setMaxLines(prefs.getMaxLines());
         tvBody.setEllipsize(TextUtils.TruncateAt.START);
         LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
@@ -605,6 +620,8 @@ public class CaptionWindow {
                         while (finalLines.size() > keep) {
                             finalLines.remove(0);
                         }
+                        // 有一句真正定稿了：强制跟到最新行
+                        broadcastNewLine = true;
                     }
                     pendingText = "";
                 } else {
@@ -638,6 +655,21 @@ public class CaptionWindow {
             }
             tvFinal.setText(sb.toString());
             tvFinal.setVisibility(View.VISIBLE);
+            // 异步滚到最新：但只有「原本就贴底」时才跟随，
+            // 避免用户正在上滑翻历史时被强行拽回底部。
+            if (scv != null) {
+                final boolean atBottom = scv.getChildCount() > 0
+                        && (scv.getScrollY() + scv.getHeight()
+                            >= scv.getChildAt(0).getHeight() - dp(24));
+                if (atBottom || broadcastNewLine) {
+                    tvFinal.post(new Runnable() {
+                        @Override public void run() {
+                            if (scv != null) scv.fullScroll(View.FOCUS_DOWN);
+                        }
+                    });
+                }
+            }
+            broadcastNewLine = false;
         } else {
             tvFinal.setText("");
             tvFinal.setVisibility(View.GONE);
@@ -703,6 +735,22 @@ public class CaptionWindow {
             handle.setAlpha(0.55f);
             handle.setPadding(0, 0, 0, 0);
         }
+    }
+
+    /**
+     * 统一生效行距。
+     * 原因：旧代码 setLineSpacing(dp(4), 1f) 的第二个参数是「行高倍数」，
+     * 写 1f 等于行高 == 字体高度，所以多行看起来几乎贴在一起。
+     * 现在从 Prefs 读取倍数（默认 1.35）+ 额外 dp 间隙。
+     */
+    private void applyLineSpacing(TextView tv) {
+        if (tv == null) return;
+        int pct = prefs.getLineSpacingPct();
+        if (pct < 100) pct = 100;
+        if (pct > 250) pct = 250;
+        float mult = pct / 100f;
+        int gapDp = prefs.getLineGapDp();
+        tv.setLineSpacing(dp(gapDp), mult);
     }
 
     private GradientDrawable makePill(int color) {

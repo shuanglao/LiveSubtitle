@@ -145,6 +145,39 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        // ---------------- 字幕行间距 ----------------
+        LinearLayout cardLs = card();
+        root.addView(cardLs, cardLp());
+
+        final TextView tvLs = cardTitle(cardLs, "字幕行间距",
+                String.format(java.util.Locale.US, "%.2f 倍", prefs.getLineSpacingPct() / 100f));
+        SeekBar sbLs = seek(cardLs, 100, 250, prefs.getLineSpacingPct());
+        sbLs.setOnSeekBarChangeListener(new SimpleSeek(100) {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                int val = real(p);
+                tvLs.setText(String.format(java.util.Locale.US, "字幕行间距    %.2f 倍", val / 100f));
+                if (fromUser) {
+                    prefs.setLineSpacingPct(val);
+                    notifyStyleChanged();
+                }
+            }
+        });
+
+        final TextView tvGap = cardTitle(cardLs, "行间额外间隙", prefs.getLineGapDp() + " dp");
+        SeekBar sbGap = seek(cardLs, 0, 16, prefs.getLineGapDp());
+        sbGap.setOnSeekBarChangeListener(new SimpleSeek(0) {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                int val = real(p);
+                tvGap.setText("行间额外间隙    " + val + " dp");
+                if (fromUser) {
+                    prefs.setLineGapDp(val);
+                    notifyStyleChanged();
+                }
+            }
+        });
+
         // ---------------- 文字颜色 ----------------
         LinearLayout card4 = card();
         root.addView(card4, cardLp());

@@ -106,6 +106,29 @@ public class Prefs {
         sp.edit().putFloat("font_size", v).apply();
     }
 
+    /**
+     * 行间距倍数 * 100（默认 135 = 1.35 倍行高）。
+     * 之前 setLineSpacing 第二参数写死 1f，行高被压成字高，多行看起来贴在一起。
+     * 存成整数避免 SharedPreferences 浮点精度差异，读取时再 /100。
+     */
+    public int getLineSpacingPct() {
+        return sp.getInt("line_spacing_pct", 135);
+    }
+    public void setLineSpacingPct(int v) {
+        if (v < 100) v = 100;
+        if (v > 250) v = 250;
+        sp.edit().putInt("line_spacing_pct", v).apply();
+    }
+    /** 行与行之间额外的像素间隙（dp，默认 2），在行高倍数之外再撑开一点 */
+    public int getLineGapDp() {
+        return sp.getInt("line_gap_dp", 2);
+    }
+    public void setLineGapDp(int v) {
+        if (v < 0) v = 0;
+        if (v > 16) v = 16;
+        sp.edit().putInt("line_gap_dp", v).apply();
+    }
+
     /** 最多显示几行 */
     public int getMaxLines() {
         return sp.getInt("max_lines", 4);
