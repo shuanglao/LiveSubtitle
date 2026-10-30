@@ -336,7 +336,7 @@ public class CaptionWindow {
         boxCard.addView(scv, scvLp);
 
         tvFinal = new TextView(ctx);
-        tvFinal.setTextColor(0xCCFFFFFF);
+        tvFinal.setTextColor(applyTextAlpha(0xFFFFFFFF));
         tvFinal.setTextSize(prefs.getFontSize());
         applyLineSpacing(tvFinal);
         // 高度 WRAP_CONTENT：让内容自然撑开，ScrollView 才有东西可滚
@@ -347,7 +347,7 @@ public class CaptionWindow {
 
         // ---- 临时文字（正在说的话，高亮）----
         tvBody = new TextView(ctx);
-        tvBody.setTextColor(prefs.getTextColor());
+        tvBody.setTextColor(applyTextAlpha(prefs.getTextColor()));
         tvBody.setTextSize(prefs.getFontSize());
         applyLineSpacing(tvBody);
         tvBody.setMaxLines(prefs.getMaxLines());
@@ -678,13 +678,13 @@ public class CaptionWindow {
         if (TextUtils.isEmpty(pendingText)) {
             if (finalLines.isEmpty()) {
                 tvBody.setText("等待声音…");
-                tvBody.setTextColor(0x88FFFFFF);
+                tvBody.setTextColor(applyTextAlpha(0xFFFFFFFF) & 0x66FFFFFF);
             } else {
                 tvBody.setText("");
             }
         } else {
             tvBody.setText(pendingText);
-            tvBody.setTextColor(prefs.getTextColor());
+            tvBody.setTextColor(applyTextAlpha(prefs.getTextColor()));
         }
     }
 
@@ -720,11 +720,12 @@ public class CaptionWindow {
 
         if (tvBody != null) {
             tvBody.setTextSize(prefs.getFontSize());
-            tvBody.setTextColor(prefs.getTextColor());
+            tvBody.setTextColor(applyTextAlpha(prefs.getTextColor()));
             tvBody.setMaxLines(prefs.getMaxLines());
         }
         if (tvFinal != null) {
             tvFinal.setTextSize(prefs.getFontSize());
+            tvFinal.setTextColor(applyTextAlpha(0xFFFFFFFF));
         }
         // 右下角手柄可视化
         if (handle != null) {
@@ -751,6 +752,17 @@ public class CaptionWindow {
         float mult = pct / 100f;
         int gapDp = prefs.getLineGapDp();
         tv.setLineSpacing(dp(gapDp), mult);
+    }
+
+    /**
+     * 把「用户选的文字颜色」的 alpha 替换成独立的文字透明度设置。
+     * 背景墙透明度（getBgAlpha）只作用于 boxCard，两者互不影响。
+     */
+    private int applyTextAlpha(int baseColor) {
+        int a = prefs.getTextAlpha();
+        if (a < 0) a = 0;
+        if (a > 255) a = 255;
+        return Color.argb(a, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor));
     }
 
     private GradientDrawable makePill(int color) {

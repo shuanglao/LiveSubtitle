@@ -34,6 +34,8 @@ public class MainActivity extends Activity {
     private static final int C_SUB = 0xFF7A8B89;
 
     private static final int REQ_AUDIO = 100;
+    /** 桌面快捷方式传入：直接开字幕，不用再点一次 */
+    public static final String EXTRA_START_NOW = "com.along.livesubtitle.START_NOW";
     /** 用户明确表达了“我要开始字幕”的意图，等权限回来后续启。
      *  用独立标志位而不是 !prefs.isEnabled() 判断，避免与 toggleCaption()
      *  内部的启停分支互相竞态，误走停止分支把自己的 enabled 抹掉。 */
@@ -82,6 +84,52 @@ public class MainActivity extends Activity {
             sc.addView(err);
             setContentView(sc);
         }
+        try {
+            registerShortcut();
+        } catch (Throwable ignore) {
+        }
+        handleStartNow(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent it) {
+        super.onNewIntent(it);
+        setIntent(it);
+        handleStartNow(it);
+    }
+
+    /** 从桌面快捷方式进来：直接开字幕 */
+    private void handleStartNow(Intent it) {
+        if (it == null) return;
+        if (!it.getBooleanExtra(EXTRA_START_NOW, false)) return;
+        it.removeExtra(EXTRA_START_NOW);
+        if (prefs.isEnabled()) return;
+        btnToggle.post(new Runnable() {
+            @Override
+            public void run() {
+                toggleCaption();
+            }
+        });
+    }
+
+    /** 注册「开启字幕」桌面快捷方式（长按图标可见，也可手动拖到桌面） */
+    private void registerShortcut() {
+        if (Build.VERSION.SDK_INT < 25) return;
+        android.content.pm.ShortcutManager sm = getSystemService(android.content.pm.ShortcutManager.class);
+        if (sm == null) return;
+        Intent launch = new Intent(this, MainActivity.class);
+        launch.setAction(Intent.ACTION_VIEW);
+        launch.putExtra(EXTRA_START_NOW, true);
+        android.content.pm.ShortcutInfo si = new android.content.pm.ShortcutInfo.Builder(
+                this, "shortcut_start_caption")
+                .setShortLabel("开字幕")
+                .setLongLabel("一键开启实时字幕")
+                .setIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
+                .setIntent(launch)
+                .build();
+        java.util.List<android.content.pm.ShortcutInfo> list = new java.util.ArrayList<>();
+        list.add(si);
+        sm.setDynamicShortcuts(list);
     }
 
     @Override

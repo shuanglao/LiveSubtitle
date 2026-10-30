@@ -91,19 +91,34 @@ public class SettingsActivity extends Activity {
         subLp.bottomMargin = dp(18);
         root.addView(sub, subLp);
 
-        // ---------------- 背景不透明度 ----------------
+        // ---------------- 透明度：背景墙 / 字幕文字（分开控制） ----------------
         LinearLayout card1 = card();
         root.addView(card1, cardLp());
 
-        final TextView tvAlpha = cardTitle(card1, "背景不透明度", prefs.getBgAlpha() + " / 255");
+        final TextView tvAlpha = cardTitle(card1, "背景墙不透明度", prefs.getBgAlpha() + " / 255");
         SeekBar sbAlpha = seek(card1, 0, 255, prefs.getBgAlpha());
         sbAlpha.setOnSeekBarChangeListener(new SimpleSeek(0) {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 int val = real(p);
-                tvAlpha.setText("背景不透明度    " + val + " / 255");
+                tvAlpha.setText("背景墙不透明度    " + val + " / 255");
                 if (fromUser) {
                     prefs.setBgAlpha(val);
+                    notifyStyleChanged();
+                }
+            }
+        });
+
+        // 字幕文字透明度：独立于背景墙，拉低只影响字，底板不受影响
+        final TextView tvTAlpha = cardTitle(card1, "字幕文字不透明度", prefs.getTextAlpha() + " / 255");
+        SeekBar sbTAlpha = seek(card1, 0, 255, prefs.getTextAlpha());
+        sbTAlpha.setOnSeekBarChangeListener(new SimpleSeek(0) {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                int val = real(p);
+                tvTAlpha.setText("字幕文字不透明度    " + val + " / 255");
+                if (fromUser) {
+                    prefs.setTextAlpha(val);
                     notifyStyleChanged();
                 }
             }

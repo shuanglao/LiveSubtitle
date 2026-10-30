@@ -88,13 +88,24 @@ public class Prefs {
         sp.edit().putInt("win_x", -1).putInt("win_y", -1).apply();
     }
 
-    /** 背景不透明度 0-255（默认 150，半透明） */
+    /** 背景墙不透明度 0-255（默认 80，偏透；与文字透明度相互独立） */
     public int getBgAlpha() {
-        return sp.getInt("bg_alpha", 150);
+        return sp.getInt("bg_alpha", 80);
     }
 
     public void setBgAlpha(int v) {
         sp.edit().putInt("bg_alpha", v).apply();
+    }
+
+    /** 字幕文字不透明度 0-255（默认 255 完全不透明；与背景墙完全解耦） */
+    public int getTextAlpha() {
+        return sp.getInt("text_alpha", 255);
+    }
+
+    public void setTextAlpha(int v) {
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        sp.edit().putInt("text_alpha", v).apply();
     }
 
     /** 字号 sp */
