@@ -263,7 +263,11 @@ public class CaptionWindow {
         tvClose.setText("×");
         tvClose.setTextSize(16f);
         tvClose.setTextColor(0xFF9A9A9A);
-        tvClose.setPadding(dp(8), 0, dp(4), 0);
+        tvClose.setPadding(dp(10), dp(6), dp(10), dp(6));
+        // 保证足够触摸面积（避免又窄又小被误命中）
+        tvClose.setMinWidth(dp(36));
+        tvClose.setMinHeight(dp(36));
+        tvClose.setGravity(Gravity.CENTER);
         barTop.addView(tvClose, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -309,11 +313,24 @@ public class CaptionWindow {
             }
         });
 
-        // 关闭按钮
+        // 关闭按钮：防误触改造
+        // 问题背景：窗口全屏宽且 root.setClickable(true)，用户点击屏幕时触摸会被
+        // overlay 吃掉，一旦恰好落在这个极窄的 × 上就会直接 stopSelf（表现为
+        // “启动几秒后字幕窗自己消失”）。改为长按关闭 + 单击提示，杜绝误触。
         tvClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                wlog("tvClose CLICK (ignored, long-press required)");
+                android.widget.Toast.makeText(ctx, "长按 × 才可关闭字幕",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        tvClose.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                wlog("tvClose LONG_CLICK -> onClose confirmed by user");
                 if (listener != null) listener.onClose();
+                return true;
             }
         });
 

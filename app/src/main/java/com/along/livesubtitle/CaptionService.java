@@ -319,6 +319,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     public void onClose() {
         // 用户主动关掉窗口 = 明确不再需要字幕。
         // 必须把 enabled 落盘清掉，否则系统 sticky 拉起后读到 true 又会重建 → 死循环。
+        // 加调用栈：以后要一眼看清到底是谁触发的（防止再次出现“无人操作却自己关掉”）。
+        logf("onClose TRIGGERED, stack=" + android.util.Log.getStackTraceString(new Throwable("onClose")));
         logf("onClose: user closed window, clear enabled & stopSelf");
         prefs.setEnabled(false);
         userStarted = false;
