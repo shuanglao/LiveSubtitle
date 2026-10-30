@@ -39,14 +39,16 @@ final class WindowView {
     final LinearLayout barTop;
     /** v1.9：白胶囊本体（挂在 barTop 内、靠右显示），barTop 自身是整行透明热区 */
     final LinearLayout barPill;
-    final TextView dragIcon;
     final TextView tvLockBtn;
     final TextView tvClose;
     final ScrollView scv;
     final TextView tvFinal;
     final TextView tvBody;
     final View pbLoading;
+    /** 右下角缩放手柄 */
     final View handle;
+    /** v1.10：左下角缩放手柄（镜像绘制） */
+    final View handleLeft;
 
     private final Context ctx;
     private final Prefs prefs;
@@ -105,21 +107,7 @@ final class WindowView {
                 LinearLayout.LayoutParams.WRAP_CONTENT);
         pillLp.gravity = Gravity.CENTER_VERTICAL;
         barTop.addView(barPill, pillLp);
-
-        // 拖动手柄：6 点阵（两列三点），比 ⠿ 更纤细克制
-        dragIcon = new TextView(ctx);
-        dragIcon.setText("\u2237\u2237");
-        dragIcon.setTextSize(13f);
-        dragIcon.setTextColor(0xFF9AAAA8);
-        dragIcon.setAlpha(0.85f);
-        dragIcon.setPadding(dp(4), 0, dp(6), 0);
-        dragIcon.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams dragLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        dragLp.gravity = Gravity.CENTER_VERTICAL;
-        barPill.addView(dragIcon, dragLp);
-
+        // v1.10：删除 6 点拖动图标（顶部条整行已可拖动，图标多余）
         // 分隔线（胶囊内细竖线）
         View vDiv = new View(ctx);
         GradientDrawable divBg = new GradientDrawable();
@@ -200,12 +188,20 @@ final class WindowView {
         boxCard.addView(pbLoading, pbLp);
 
         // ---- 右下角缩放手柄（斜纹 3 条）----
-        handle = buildHandle();
+        handle = buildHandle(false);
         FrameLayout.LayoutParams handleLp = new FrameLayout.LayoutParams(dp(26), dp(26));
         handleLp.gravity = Gravity.RIGHT | Gravity.BOTTOM;
         handleLp.rightMargin = dp(4);
         handleLp.bottomMargin = dp(4);
         root.addView(handle, handleLp);
+
+        // v1.10：左下角再加一个缩放手柄（与右下角镜像对称）
+        handleLeft = buildHandle(true);
+        FrameLayout.LayoutParams handleLeftLp = new FrameLayout.LayoutParams(dp(26), dp(26));
+        handleLeftLp.gravity = Gravity.LEFT | Gravity.BOTTOM;
+        handleLeftLp.leftMargin = dp(4);
+        handleLeftLp.bottomMargin = dp(4);
+        root.addView(handleLeft, handleLeftLp);
     }
 
     // ============================================================
@@ -285,7 +281,8 @@ final class WindowView {
     }
 
     /** 右下角缩放手柄：斜纹 3 条。 */
-    private View buildHandle() {
+    private View buildHandle(boolean left) {
+        final boolean isLeft = left;
         return new View(ctx) {
             private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
             {
@@ -294,7 +291,6 @@ final class WindowView {
                 p.setStyle(Paint.Style.STROKE);
                 p.setStrokeCap(Paint.Cap.ROUND);
             }
-
             @Override
             protected void onDraw(Canvas canvas) {
                 int w = getWidth();
@@ -302,14 +298,27 @@ final class WindowView {
                 if (w <= 0 || h <= 0) return;
                 int gap = dp(5);
                 int len = dp(7);
-                // 从右下往左上画 3 条斜线
-                for (int i = 0; i < 3; i++) {
-                    int off = i * gap;
-                    float x2 = w - dp(5) - off;
-                    float y2 = h - dp(5);
-                    float x1 = w - dp(5);
-                    float y1 = h - dp(5) - len - off;
-                    canvas.drawLine(x1, y1, x2 + len, y2 + len, p);
+                int pad = dp(5);
+                if (!isLeft) {
+                    // 右下角：从右下往左上画 3 条斜线
+                    for (int i = 0; i < 3; i++) {
+                        int off = i * gap;
+                        float x2 = w - pad - off;
+                        float y2 = h - pad;
+                        float x1 = w - pad;
+                        float y1 = h - pad - len - off;
+                        canvas.drawLine(x1, y1, x2 + len, y2 + len, p);
+                    }
+                } else {
+                    // 左下角：从左下往右上画 3 条斜线（镜像）
+                    for (int i = 0; i < 3; i++) {
+                        int off = i * gap;
+                        float x2 = pad + off;
+                        float y2 = h - pad;
+                        float x1 = pad;
+                        float y1 = h - pad - len - off;
+                        canvas.drawLine(x1, y1, x2 + len, y2 + len, p);
+                    }
                 }
             }
         };

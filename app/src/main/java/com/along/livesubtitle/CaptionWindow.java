@@ -118,8 +118,10 @@ public class CaptionWindow {
     private LinearLayout barTop;
     private TextView tvLockBtn;
     private TextView tvClose;
-    private TextView dragIcon;
+    /** 右下角缩放手柄 */
     private View handle;
+    /** v1.10：左下角缩放手柄 */
+    private View handleLeft;
     /** 视图层（纯控件构造，无事件无状态） */
     private WindowView wv;
 
@@ -260,7 +262,6 @@ public class CaptionWindow {
         root = wv.root;
         boxCard = wv.boxCard;
         barTop = wv.barTop;
-        dragIcon = wv.dragIcon;
         tvLockBtn = wv.tvLockBtn;
         tvClose = wv.tvClose;
         scv = wv.scv;
@@ -268,6 +269,7 @@ public class CaptionWindow {
         tvBody = wv.tvBody;
         pbLoading = wv.pbLoading;
         handle = wv.handle;
+        handleLeft = wv.handleLeft;
         // ============ 事件绑定 ============
 
         // 锁定按钮
@@ -379,6 +381,49 @@ public class CaptionWindow {
             }
         });
 
+        // v1.10：左下角缩放（往左拖加宽 + 窗口左移，往下拖加高，视觉上从左下角向外生长）
+        handleLeft.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent e) {
+                if (locked) return false;
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = e.getRawX();
+                        downRawY = e.getRawY();
+                        downW = lp.width;
+                        downH = lp.height;
+                        downLpX = lp.x;
+                        resizing = true;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        if (!resizing) return false;
+                        int dx = (int) (downRawX - e.getRawX());   // 往左为正
+                        int dy = (int) (e.getRawY() - downRawY);   // 往下为正
+                        int nw2 = Math.max(dp(120), downW + dx);
+                        int nh2 = Math.max(dp(60), downH + dy);
+                        lp.width = nw2;
+                        lp.height = nh2;
+                        // 左移补偿，保证右边不动；再夹到屏幕内，避免拖出左边界
+                        int nx2 = downLpX - (nw2 - downW);
+                        lp.x = Math.max(0, nx2);
+                        if (added) {
+                            try {
+                                wm.updateViewLayout(root, lp);
+                            } catch (Throwable ignore) {
+                            }
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (resizing) {
+                            resizing = false;
+                            saveGeometry();
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
         // 未锁定时整个窗口可点（避免触摸穿透），锁定后由 FLAG 统一处理
         root.setClickable(true);
 
@@ -499,11 +544,11 @@ public class CaptionWindow {
         // 锁定时隐藏所有窗口内交互件（拖动/缩放/解锁/关闭），全窗触摸穿透，
         // 解锁统一走通知栏 ACTION_TOGGLE_LOCK（窗口级 FLAG_NOT_TOUCHABLE 收不到触摸，
         // 窗口内按钮即使画出来也点不到，必须靠通知栏这条系统通道）
-        if (dragIcon != null) {
-            dragIcon.setVisibility(v ? View.GONE : View.VISIBLE);
-        }
         if (handle != null) {
             handle.setVisibility(v ? View.GONE : View.VISIBLE);
+        }
+        if (handleLeft != null) {
+            handleLeft.setVisibility(v ? View.GONE : View.VISIBLE);
         }
         if (tvLockBtn != null) {
             tvLockBtn.setVisibility(v ? View.GONE : View.VISIBLE);
