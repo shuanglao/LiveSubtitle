@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -35,7 +36,7 @@ final class WindowView {
     // ---------------- 对外暴露的控件 ----------------
     final FrameLayout root;
     final LinearLayout boxCard;
-    final LinearLayout barTop;
+    final DragBarLayout barTop;
     final TextView dragIcon;
     final TextView tvLockBtn;
     final TextView tvClose;
@@ -73,7 +74,9 @@ final class WindowView {
         root.addView(boxCard, cardLp);
 
         // ---- 顶部操作条（浮动胶囊，贴右上角）----
-        barTop = new LinearLayout(ctx);
+        // v1.7：改用 DragBarLayout，整条空白区域都可按住拖动；
+        //       内部按钮（锁定 / 关闭）仍正常接收点击，不会被抢走。
+        barTop = new DragBarLayout(ctx);
         barTop.setOrientation(LinearLayout.HORIZONTAL);
         barTop.setGravity(Gravity.CENTER_VERTICAL);
         barTop.setPadding(dp(6), dp(3), dp(6), dp(3));
@@ -398,5 +401,100 @@ final class WindowView {
         }
         if (d <= 0f) d = 3.0f;
         return Math.round(v * d);
+    }
+
+    // ============================================================
+    //  v1.7 新增：可拖动顶部条
+    // ============================================================
+    /**
+     * 顶部操作条专用容器。
+     *
+     * 需求：整条「空白区域」按住都能拖动窗口，但内部按钮（锁定 / 关闭）
+     * 必须照常响应单击 / 长按。
+     *
+     * 为什么不能直接 setOnTouchListener 了事：
+     *   LinearLayout 作为 ViewGroup，触摸事件会先给子 View 判断；
+     *   按下落在 tvLockBtn / tvClose 上时，子 View 消费了 DOWN，
+     *   父容器的 OnTouchListener 根本收不到 → 表现为「按钮那块拖不动」。
+     *
+     * 解决思路：
+     *   重写 onInterceptTouchEvent，只做一件事——
+     *   判断按下的坐标落在哪个子 View 上：
+     *     · 落在可点击按钮（锁定 / 关闭）上 → 不拦截，正常交给按钮
+     *     · 落在其它任何位置（点阵手柄 / 分隔线 / 内边距空白）→ 拦截，
+     *       事件转给本容器的 onTouchEvent 用来拖动
+     *   这样「整条都能拖」，同时按钮不会失灵。
+     */
+    static final class DragBarLayout extends LinearLayout {
+
+        interface DragCallback {
+            /** @param interrupted 是否为 ACTION_CANCEL 等被动中断 */
+            void onDragEnd(boolean interrupted);
+        }
+
+        private View.OnTouchListener dragListener;
+        private DragCallback callback;
+        /** 本次手势是否由本容器接管（用于决定 UP 时是否回调 onDragEnd）。 */
+        private boolean captured;
+
+        DragBarLayout(Context context) {
+            super(context);
+            setClickable(false);
+        }
+
+        /** 设置拖动处理器（复用 CaptionWindow 里已有的那套拖动逻辑）。 */
+        void setDragTouchListener(View.OnTouchListener l) {
+            this.dragListener = l;
+            setOnTouchListener(l);
+        }
+
+        void setDragCallback(DragCallback c) {
+            this.callback = c;
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent ev) {
+            if (dragListener == null) {
+                return super.onInterceptTouchEvent(ev);
+            }
+            if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                // 命中按钮 → 放行给按钮，整个手势都不拦截
+                captured = !isOnClickableChild((int) ev.getX(), (int) ev.getY());
+                return captured;
+            }
+            // 一旦 DOWN 时决定接管，后续 MOVE/UP 全部由自己处理
+            return captured;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent ev) {
+            if (dragListener == null) {
+                return super.onTouchEvent(ev);
+            }
+            boolean handled = dragListener.onTouch(this, ev);
+            int a = ev.getActionMasked();
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                boolean was = captured;
+                captured = false;
+                if (was && callback != null) {
+                    callback.onDragEnd(a == MotionEvent.ACTION_CANCEL);
+                }
+            }
+            return handled;
+        }
+
+        /** 坐标是否落在「可点击的子 View」上（按钮区域）。 */
+        private boolean isOnClickableChild(int x, int y) {
+            for (int i = 0; i < getChildCount(); i++) {
+                View c = getChildAt(i);
+                if (c == null || c.getVisibility() != View.VISIBLE) continue;
+                if (!c.isClickable() && !c.isLongClickable()) continue;
+                if (x >= c.getLeft() && x < c.getRight()
+                        && y >= c.getTop() && y < c.getBottom()) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 }

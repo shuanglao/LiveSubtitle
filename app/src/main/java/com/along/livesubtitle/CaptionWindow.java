@@ -114,7 +114,8 @@ public class CaptionWindow {
     private View pbLoading;   // 模型下载/引擎准备进度条（自绘细条，v1.6 毛玻璃）
     /** 引擎处于准备阶段（下载/加载/等待）时为 true，此时进度条可见。出字幕或就绪后必须置 false */
     private boolean engineBusy = false;
-    private LinearLayout barTop;
+    /** 顶部操作条（DragBarLayout：整条可按住拖动，按钮区域自动放行） */
+    private WindowView.DragBarLayout barTop;
     private TextView tvLockBtn;
     private TextView tvClose;
     private TextView dragIcon;
@@ -332,7 +333,9 @@ public class CaptionWindow {
             }
         };
         dragIcon.setOnTouchListener(dragTouch);
-        barTop.setOnTouchListener(dragTouch);
+        // v1.7：顶部条改用 DragBarLayout 的拦截式拖动 —— 整条空白区域都能拖，
+        //       但锁定 / 关闭按钮区域不拦截，点击照常生效。
+        barTop.setDragTouchListener(dragTouch);
 
         // 右下角缩放
         handle.setOnTouchListener(new View.OnTouchListener() {
@@ -479,10 +482,15 @@ public class CaptionWindow {
         lp.flags = baseFlags;
 
         // UI 提示
+        // v1.7 修复：原来这里把文字改成「已锁定 / 锁定」两个/三个汉字，
+        // 而 tvLockBtn 是 30dp 的定尺寸圆（lockLp），文字必然溢出到圆外。
+        // 改为单字符圆点：未锁定 = ○（空心，墨绿），已锁定 = ●（实心，灰）。
+        // 语义靠颜色 + 实心与否表达，永不溢出。
         if (tvLockBtn != null) {
-            tvLockBtn.setText(v ? "已锁定" : "锁定");
+            tvLockBtn.setText(v ? "\u25CF" : "\u25CB");
+            tvLockBtn.setTextSize(v ? 11f : 15f);
             tvLockBtn.setTextColor(v ? 0xFF9A9A9A : 0xFF0E5F5C);
-            tvLockBtn.setBackground(makePill(v ? 0xFFEEEEEE : 0xFFD6EDEC));
+            tvLockBtn.setBackground(wv.makeCircle(v ? 0x14000000 : 0x140E5F5C));
         }
         // 锁定时隐藏所有窗口内交互件（拖动/缩放/解锁/关闭），全窗触摸穿透，
         // 解锁统一走通知栏 ACTION_TOGGLE_LOCK（窗口级 FLAG_NOT_TOUCHABLE 收不到触摸，
