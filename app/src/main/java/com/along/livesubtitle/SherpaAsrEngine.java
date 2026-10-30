@@ -522,10 +522,21 @@ public class SherpaAsrEngine implements AsrEngine {
         config.setEnableEndpoint(true);
         config.setDecodingMethod("greedy_search");
 
-                logf("[init] step3 new OnlineRecognizer (may take a while)...");
+        logf("[init] step3a verify model files exist");
+        String[] musts = {ENCODER, DECODER, JOINER, TOKENS};
+        boolean allOk = true;
+        for (String f : musts) {
+            File mf = new File(modelDir, f);
+            logf("[init]   " + f + " exists=" + mf.exists() + " len=" + mf.length());
+            if (!mf.exists() || mf.length() == 0) allOk = false;
+        }
+        if (!allOk) throw new RuntimeException("model files missing");
+
+        logf("[init] step3b new OnlineRecognizer(null, config) -> newFromFile 路径");
         long t0 = System.currentTimeMillis();
-        recognizer = new OnlineRecognizer(context.getAssets(), config);
-        logf("[init] step3 ctor returned in " + (System.currentTimeMillis()-t0) + "ms");
+        recognizer = new OnlineRecognizer(null, config);
+        logf("[init] step3b ctor returned in " + (System.currentTimeMillis()-t0) + "ms");
+
         logf("[init] step4 createStream");
         stream = recognizer.createStream("");
         logf("[init] createStream OK");
