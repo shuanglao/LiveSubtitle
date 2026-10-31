@@ -408,6 +408,29 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        // ---------------- 调试日志（v1.13 第3条） ----------------
+        LinearLayout cardLog = card();
+        root.addView(cardLog, cardLp());
+        cardTitle(cardLog, "\u8c03\u8bd5\u65e5\u5fd7",
+                "\u5f00\u542f\u540e\u628a\u8fd0\u884c\u5168\u94fe\u8def\u5199\u5165 files/svc.log\uff0c"
+                        + "\u6392\u67e5\u95ee\u9898\u65f6\u5fc5\u5f00");
+        Switch swLog = new Switch(this);
+        swLog.setChecked(prefs.isDebugLog());
+        LinearLayout.LayoutParams swLogLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swLogLp.topMargin = dp(6);
+        cardLog.addView(swLog, swLogLp);
+        swLog.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                prefs.setDebugLog(checked);
+                Lg.setDebug(checked);
+                Toast.makeText(SettingsActivity.this,
+                        checked ? "\u5df2\u5f00\u542f\u8c03\u8bd5\u65e5\u5fd7"
+                                : "\u5df2\u5173\u95ed\u8c03\u8bd5\u65e5\u5fd7\uff08\u4e0b\u6b21\u542f\u52a8\u751f\u6548\uff09",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
         // ---------------- 音频模式 ----------------
         LinearLayout card7 = card();
         root.addView(card7, cardLp());

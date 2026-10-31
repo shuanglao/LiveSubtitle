@@ -50,6 +50,23 @@ public final class Lg {
 
     public static void setDebug(boolean d) { DEBUG = d; }
 
+    /**
+     * v1.13 第3条：启动时按用户偏好覆盖 BuildConfig 默认值。
+     * 在 CaptionService / SettingsActivity / MainActivity 入口 onCreate 调用一次即可，
+     * 重复调用无副作用。
+     * 注意：这是「运行期开关」，不改 Lg 的写盘逻辑，日志铁律不变——
+     *      开关打开时依然写全链路日志，只是决定是否静默。
+     */
+    public static void initFromPrefs(Context c) {
+        if (c == null) return;
+        try {
+            DEBUG = new Prefs(c).isDebugLog();
+        } catch (Throwable ignore) {
+            // 读取失败就保持原值，绝不因为开关而丢日志能力
+        }
+        Log.i("Lg", "debug log = " + DEBUG);
+    }
+
     /** 服务/窗口日志，写 files/svc.log（仅 Debug 包）*/
     public static void svc(Context c, String msg) {
         if (!DEBUG) return;

@@ -61,6 +61,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     @Override
     public void onCreate() {
         super.onCreate();
+        // v1.13 第3条：先按用户偏好初始化日志开关，再往下打日志
+        Lg.initFromPrefs(this);
         prefs = new Prefs(this);
         createChannel();
         installCrashHandler();

@@ -52,6 +52,25 @@ public class Prefs {
         sp.edit().putBoolean("heartbeat", v).commit();
     }
 
+    // ---------- 调试日志开关（v1.13 第3条） ----------
+    /**
+     * 是否开启落盘调试日志。
+     * 默认值跟随 BuildConfig.DEBUG：debug 包默认 true，release 包默认 false。
+     * 用户可在设置页手动切换，切换后立即生效（同步 Lg.setDebug）。
+     */
+    public boolean isDebugLog() {
+        boolean def = true;
+        try {
+            def = BuildConfig.DEBUG;
+        } catch (Throwable ignore) {
+            def = true;
+        }
+        return sp.getBoolean("debug_log", def);
+    }
+    public void setDebugLog(boolean v) {
+        sp.edit().putBoolean("debug_log", v).commit();
+    }
+
     // ---------- 音频模式 ----------
     /** 0 = 麦克风，1 = 内录（MediaProjection），2 = 自动（内录失败降级麦克风） */
     public int getAudioMode() {

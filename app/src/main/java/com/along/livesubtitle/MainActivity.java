@@ -54,6 +54,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // v1.13 第3条：应用入口先初始化日志开关
+        Lg.initFromPrefs(getApplicationContext());
         prefs = new Prefs(this);
         // 开门兜底：打开主界面即自动解锁。
         // 锁定时窗口全穿透、窗口内按钮均不可见，万一通知栏入口被系统归档，
