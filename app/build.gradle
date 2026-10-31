@@ -18,6 +18,11 @@ android {
         }
     }
 
+    // v1.11 第3条：AGP 8.x 默认 buildConfig=false，开启后 Lg 才能用 BuildConfig.DEBUG
+    buildFeatures {
+        buildConfig true
+    }
+
     buildTypes {
         release {
             minifyEnabled false
