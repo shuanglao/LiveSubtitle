@@ -110,6 +110,8 @@ public class ProbeService extends Service {
         long nonzero = 0;
         long sumAbs = 0;
         String failMsg = null;
+        int usedLevel = 0;
+        String tryDetail = "";
 
         try {
             if (data == null) {
@@ -125,40 +127,91 @@ public class ProbeService extends Service {
                     Slog.w(failMsg);
                 } else {
                     Slog.w("getMediaProjection OK");
-                    AudioPlaybackCaptureConfiguration acc =
-                            new AudioPlaybackCaptureConfiguration.Builder(mp)
-                                    .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+
+                    // ============ 两级降级尝试 ============
+                    // 第 1 级：只抓媒体（抖音/视频 -> USAGE_MEDIA），最保守、命中率最高
+                    // 第 2 级：全量（含 VOICE_COMMUNICATION），用于将来验证通话
+                    // 每级都完整记录异常，最终把两级结果一起写进报告。
+                    StringBuilder tryLog = new StringBuilder();
+                    int[] levels = new int[]{1, 2};
+
+                    for (int lv : levels) {
+                        if (ar != null) {
+                            try {
+                                ar.release();
+                            } catch (Throwable ignored) {
+                            }
+                            ar = null;
+                        }
+                        tryLog.append("-- 尝试 LV").append(lv).append(" : ");
+
+                        AudioPlaybackCaptureConfiguration acc;
+                        if (lv == 1) {
+                            acc = new AudioPlaybackCaptureConfiguration.Builder(mp)
+                                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                                    .build();
+                            tryLog.append("usage=[MEDIA,GAME] ");
+                        } else {
+                            acc = new AudioPlaybackCaptureConfiguration.Builder(mp)
                                     .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                                     .addMatchingUsage(AudioAttributes.USAGE_GAME)
                                     .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                                    .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                                     .build();
-                    Slog.w("CaptureConfig 构建完成");
+                            tryLog.append("usage=[MEDIA,GAME,UNKNOWN,VOICE_COMM] ");
+                        }
 
-                    int minBuf = AudioRecord.getMinBufferSize(
-                            SAMPLE_RATE,
-                            AudioFormat.CHANNEL_IN_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT);
-                    int bufSize = Math.max(minBuf, SAMPLE_RATE);
-                    Slog.w("minBuf=" + minBuf + " bufSize=" + bufSize);
+                        int minBuf = AudioRecord.getMinBufferSize(
+                                SAMPLE_RATE,
+                                AudioFormat.CHANNEL_IN_MONO,
+                                AudioFormat.ENCODING_PCM_16BIT);
+                        int bufSize = Math.max(minBuf, SAMPLE_RATE);
+                        tryLog.append("minBuf=").append(minBuf)
+                                .append(" bufSize=").append(bufSize).append(" ");
 
-                    ar = new AudioRecord.Builder()
-                            .setAudioFormat(new AudioFormat.Builder()
-                                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                    .setSampleRate(SAMPLE_RATE)
-                                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                                    .build())
-                            .setBufferSizeInBytes(bufSize * 2)
-                            .setAudioPlaybackCaptureConfig(acc)
-                            .build();
+                        try {
+                            ar = new AudioRecord.Builder()
+                                    .setAudioFormat(new AudioFormat.Builder()
+                                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                            .setSampleRate(SAMPLE_RATE)
+                                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                                            .build())
+                                    .setBufferSizeInBytes(bufSize * 2)
+                                    .setAudioPlaybackCaptureConfig(acc)
+                                    .build();
 
-                    Slog.w("AudioRecord state=" + ar.getState()
-                            + " (1=INITIALIZED)");
+                            Slog.w("LV" + lv + " AudioRecord 构造成功");
+                            tryLog.append("state=").append(ar.getState())
+                                    .append(" sessionId=").append(ar.getAudioSessionId());
+                        } catch (Throwable te) {
+                            String msg = te.getClass().getName() + " / " + te.getMessage();
+                            Slog.w("LV" + lv + " AudioRecord 构造异常: " + msg);
+                            tryLog.append("构造异常=").append(msg).append("\n");
+                            failMsg = "LV" + lv + " 构造异常: " + msg;
+                            ar = null;
+                            continue;
+                        }
 
-                    if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
-                        failMsg = "AudioRecord 未初始化 state=" + ar.getState()
-                                + "（可能是系统阉割了 PlaybackCapture）";
-                        Slog.w(failMsg);
-                    } else {
+                        if (ar == null || ar.getState() != AudioRecord.STATE_INITIALIZED) {
+                            int st = (ar == null ? -999 : ar.getState());
+                            tryLog.append(" 未初始化(state=").append(st).append(")\n");
+                            failMsg = "LV" + lv + " AudioRecord 未初始化 state=" + st;
+                            Slog.w(failMsg);
+                            continue;
+                        }
+
+                        // 走到这里 = 本级别初始化成功
+                        tryLog.append(" 初始化OK\n");
+                        failMsg = null;
+                        usedLevel = lv;
+                        break;
+                    }
+
+                    tryDetail = tryLog.toString();
+                    Slog.w("两级尝试详情:\n" + tryDetail);
+
+                    if (ar != null && ar.getState() == AudioRecord.STATE_INITIALIZED) {
                         ar.startRecording();
                         Slog.w("startRecording OK, 采样 " + PROBE_SECONDS + "s");
 
@@ -223,19 +276,25 @@ public class ProbeService extends Service {
             verdict = "AUDIO_OK";
         }
 
-        String report = buildReport(verdict, failMsg, total, rounds, peak, nonzero, sumAbs);
+        String report = buildReport(verdict, failMsg, total, rounds, peak, nonzero, sumAbs,
+                usedLevel, tryDetail);
         Slog.w("VERDICT=" + verdict);
         writeReportFile(report);
         broadcastReport(report);
     }
 
     private String buildReport(String verdict, String failMsg, int total, int rounds,
-                               int peak, long nonzero, long sumAbs) {
+                               int peak, long nonzero, long sumAbs,
+                               int usedLevel, String tryDetail) {
         StringBuilder sb = new StringBuilder();
         String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
         sb.append("\n===== 探测报告 ").append(ts).append(" =====\n");
         sb.append("VERDICT: ").append(verdict).append("\n");
+        sb.append("USED_LEVEL: ").append(usedLevel == 0 ? "无（两级均失败）" : ("LV" + usedLevel)).append("\n");
         if (failMsg != null) sb.append("FAIL_MSG: ").append(failMsg).append("\n");
+        if (tryDetail != null && tryDetail.length() > 0) {
+            sb.append("--- 两级尝试详情 ---\n").append(tryDetail);
+        }
         sb.append("totalSamples: ").append(total).append("\n");
         sb.append("readRounds: ").append(rounds).append("\n");
         sb.append("peakAbs: ").append(peak).append("  (满刻度 32767)\n");
