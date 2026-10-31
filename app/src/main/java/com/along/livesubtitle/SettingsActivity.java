@@ -16,6 +16,7 @@ import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import rikka.shizuku.Shizuku;
 
 /**
  * 字幕窗外观设置。
@@ -92,6 +93,9 @@ public class SettingsActivity extends Activity {
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setLetterSpacing(-0.02f);
         root.addView(title);
+
+        // Shizuku 权限状态（只读）
+        addShizukuCard(root);
 
         LinearLayout subRow = new LinearLayout(this);
         subRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -531,6 +535,105 @@ public class SettingsActivity extends Activity {
      * value 为空时只显示标题（用于「文字颜色」「背景色调」这类纯色点卡片）。
      * 返回的 TextView 即标题本身；胶囊挂在其 tag 上，刷新数值用 setPill(tv, ...)。
      */
+    // ============================================================
+    //  Shizuku 状态（只读，不主动申请权限）
+    // ============================================================
+    private TextView tvShizuku;   // 状态行文本
+    private boolean shizukuListenerBound = false;
+
+    private void addShizukuCard(LinearLayout root) {
+        LinearLayout c = card();
+        root.addView(c, cardLp());
+        cardTitle(c, "Shizuku 权限", "");
+
+        tvShizuku = new TextView(this);
+        tvShizuku.setTextSize(13f);
+        tvShizuku.setTextColor(C_SUB);
+        tvShizuku.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(8);
+        c.addView(tvShizuku, lp);
+
+        bindShizukuListeners();
+        refreshShizukuState();
+    }
+
+    /** 注册一次性监听，Shizuku 连上/断开/授权变化时自动刷新 */
+    private void bindShizukuListeners() {
+        if (shizukuListenerBound) return;
+        shizukuListenerBound = true;
+        try {
+            Shizuku.addBinderReceivedListener(binderReceivedListener);
+            Shizuku.addBinderDeadListener(binderDeadListener);
+            Shizuku.addRequestPermissionResultListener(permResultListener);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener =
+            new Shizuku.OnBinderReceivedListener() {
+                @Override
+                public void onBinderReceived() {
+                    refreshShizukuState();
+                }
+            };
+
+    private final Shizuku.OnBinderDeadListener binderDeadListener =
+            new Shizuku.OnBinderDeadListener() {
+                @Override
+                public void onBinderDead() {
+                    refreshShizukuState();
+                }
+            };
+
+    private final Shizuku.OnRequestPermissionResultListener permResultListener =
+            new Shizuku.OnRequestPermissionResultListener() {
+                @Override
+                public void onRequestPermissionResult(int requestCode, int grantResult) {
+                    refreshShizukuState();
+                }
+            };
+
+    /** 刷新状态文本；任何异常都不能崩掉设置页 */
+    private void refreshShizukuState() {
+        if (tvShizuku == null) return;
+        String text;
+        try {
+            if (!Shizuku.pingBinder()) {
+                text = "● 未连接：Shizuku 服务未运行或未安装";
+                tvShizuku.setTextColor(C_DANGER);
+            } else {
+                int ver = Shizuku.getVersion();
+                if (Shizuku.isPreV11()) {
+                    text = "● 已连接（旧版 v" + ver + "，不支持授权）";
+                    tvShizuku.setTextColor(C_SUB);
+                } else if (Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    text = "● 已授权：Shizuku v" + ver + "，可用于电池白名单";
+                    tvShizuku.setTextColor(C_ACCENT);
+                } else {
+                    text = "● 未授权：Shizuku v" + ver + "，尚未允许本应用";
+                    tvShizuku.setTextColor(C_SUB);
+                }
+            }
+        } catch (Throwable t) {
+            text = "● 无法获取状态：" + t.getClass().getSimpleName();
+            tvShizuku.setTextColor(C_SUB);
+        }
+        tvShizuku.setText(text);
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            Shizuku.removeBinderReceivedListener(binderReceivedListener);
+            Shizuku.removeBinderDeadListener(binderDeadListener);
+            Shizuku.removeRequestPermissionResultListener(permResultListener);
+        } catch (Throwable ignored) {
+        }
+        super.onDestroy();
+    }
+
     private TextView cardTitle(LinearLayout parent, String label, String value) {
         boolean hasValue = value != null && value.length() > 0;
 
