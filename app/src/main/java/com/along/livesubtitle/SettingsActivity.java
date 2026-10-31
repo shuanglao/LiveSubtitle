@@ -918,12 +918,14 @@ public class SettingsActivity extends Activity {
             @Override public void run() {
                 final boolean ok = ShizukuShell.addPowerWhitelist(pkg);
                 final boolean inList = ok || ShizukuShell.isPowerWhitelisted(pkg);
+                final String dbg = inList ? "" : ShizukuShell.debugWhitelistRaw();
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
                         if (inList) {
                             Toast.makeText(SettingsActivity.this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
                         } else {
-                            Toast.makeText(SettingsActivity.this, "失败：命令未生效", Toast.LENGTH_SHORT).show();
+                            String msg = "失败：命令未生效\n" + dbg;
+                            Toast.makeText(SettingsActivity.this, msg, Toast.LENGTH_LONG).show();
                         }
                         refreshShizukuState();
                     }

@@ -55,9 +55,31 @@ public final class ShizukuShell {
         Process p = null;
         try {
             Class<?> c = Class.forName("rikka.shizuku.Shizuku");
-            Method m = c.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+            Method m = null;
+            // 1) 优先精确签名
+            try {
+                m = c.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+            } catch (Throwable e1) {
+                m = null;
+            }
+            // 2) 兜底：按方法名模糊匹配，自适应参数个数
+            if (m == null) {
+                for (Method cand : c.getDeclaredMethods()) {
+                    if (!"newProcess".equals(cand.getName())) continue;
+                    if (cand.getParameterTypes().length == 3) { m = cand; break; }
+                    if (m == null) m = cand;
+                }
+            }
+            if (m == null) return new Result(-3, "NoSuchMethod:newProcess");
             m.setAccessible(true);
-            Object o = m.invoke(null, cmd, null, null);
+            // 按实际参数类型构造实参，避免 IllegalArgumentException
+            Class<?>[] pt = m.getParameterTypes();
+            Object[] args = new Object[pt.length];
+            for (int i = 0; i < pt.length; i++) {
+                if (pt[i] == String[].class) args[i] = (i == 0 ? cmd : null);
+                else args[i] = null;
+            }
+            Object o = m.invoke(null, args);
             if (!(o instanceof Process)) return FAIL;
             p = (Process) o;
             final StringBuilder sb = new StringBuilder();
@@ -195,7 +217,29 @@ public final class ShizukuShell {
     /** 查询该包是否已在白名单 */
     public static boolean isPowerWhitelisted(String pkg) {
         if (pkg == null || pkg.length() == 0) return false;
+        // 通路1: cmd deviceidle whitelist
         Result r = exec("cmd deviceidle whitelist");
-        return r.out.contains(pkg);
+        if (r.ok() && r.out != null && r.out.contains(pkg)) return true;
+        // 通路2: 兜底读 dumpsys（部分 ROM 下 cmd 无输出或不可用）
+        Result r2 = exec("dumpsys deviceidle whitelist");
+        if (r2.out != null && r2.out.contains(pkg)) return true;
+        return false;
+    }
+
+    /** 诊断用：返回最近一次白名单查询结果的原始文本，供 UI 展示 */
+    public static String debugWhitelistRaw() {
+        StringBuilder sb = new StringBuilder();
+        Result r1 = exec("cmd deviceidle whitelist");
+        sb.append("[cmd] code=").append(r1.code).append(" out=").append(clip(r1.out)).append("\n");
+        Result r2 = exec("dumpsys deviceidle whitelist");
+        sb.append("[dumpsys] code=").append(r2.code).append(" out=").append(clip(r2.out)).append("\n");
+        return sb.toString();
+    }
+
+    /** 截断过长文本，避免 Toast 撑爆 */
+    private static String clip(String s) {
+        if (s == null) return "null";
+        if (s.length() <= 300) return s;
+        return s.substring(0, 300) + "...(len=" + s.length() + ")";
     }
 }
