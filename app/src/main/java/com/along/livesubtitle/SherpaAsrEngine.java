@@ -49,13 +49,25 @@ public class SherpaAsrEngine implements AsrEngine {
     /** endpoint 后补的静音时长（秒），用于捞回尾字 */
     /** 静音判定阈值（RMS 归一化后），约 -38dB：低于此值视为没人说话 */
     private static final float SILENCE_LEVEL = 0.012f;
-    /** 连续静音超过这么多秒才进入暂停（避免句中换气被误判） */
-    private static final float SILENCE_HOLD_SEC = 6.0f;
+    /** 连续静音超过这么多秒才进入暂停（避免句中换气被误判）
+     *  v1.14: 6s -> 12s，视频对白间隙常达数秒，6s 会误暂停丢音频 */
+    private static final float SILENCE_HOLD_SEC = 12.0f;
     /** 当前是否处于「静音暂停」态：停止向识别器喂数据以省电 */
     private volatile boolean pausedBySilence = false;
     /** 已连续静音的秒数累计 */
     private float silenceAccum = 0f;
     private static final float TAIL_PADDING_SEC = 0.8f;
+
+    /** v1.14: AudioRecord 缓冲区倍数（默认仅 1 秒，decode 一慢就丢帧） */
+    private static final int AUDIO_BUF_SECONDS = 4;
+    /** v1.14: 连续 read 失败多少次后重建 AudioRecord（防线程静默死亡） */
+    private static final int READ_FAIL_LIMIT = 20;
+    /** v1.14: 单次 read 耗时超过该毫秒数则记日志（异常阻塞告警） */
+    private static final long READ_SLOW_MS = 500;
+    /** v1.14: 单次 decode 耗时超过该毫秒数则记日志 */
+    private static final long DECODE_SLOW_MS = 500;
+    /** v1.14: 两次回调间隔超过该毫秒数则记日志（断流告警） */
+    private static final long GAP_WARN_MS = 500;
 
     private final Context context;
     private AsrEngine.Callback callback;
@@ -520,7 +532,10 @@ public class SherpaAsrEngine implements AsrEngine {
         modelConfig.setTokens(modelDir + "/" + TOKENS);
         modelConfig.setModelType("zipformer");
         modelConfig.setNumThreads(2);
-        modelConfig.setDebug(true);       // 开 native 详细日志
+        // v1.14: 必须关闭 native debug 日志！开着会每帧往 logcat 狂写，
+        // 而本机 logcat 无人消费（缓冲区 0B readable），写入端被反压 →
+        // decode 线程被拖住 → 周期性卡壳。这是「卡一下-恢复-再卡」的主因。
+        modelConfig.setDebug(false);
         modelConfig.setProvider("cpu");
 
         EndpointRule rule1 = new EndpointRule(false, 2.4f, 0f);
@@ -569,7 +584,12 @@ public class SherpaAsrEngine implements AsrEngine {
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT);
-            int bufSize = Math.max(minBuf * 2, SAMPLE_RATE * 2);
+            // v1.14: 原为 max(minBuf*2, SAMPLE_RATE*2) 仅约 1 秒缓冲，
+            // decode 一旦慢于 100ms 环形缓冲就会溢出丢帧 → 识别跳字。
+            // 扩到 4 秒，给 decode 足够的容错空间。
+            int bufSize = Math.max(minBuf * 2, SAMPLE_RATE * 2 * AUDIO_BUF_SECONDS);
+            elog("[audio] getMinBufferSize=" + minBuf + " bufSize=" + bufSize
+                    + " (" + AUDIO_BUF_SECONDS + "s)");
             audioRecord = new AudioRecord(
                     MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
@@ -594,17 +614,77 @@ public class SherpaAsrEngine implements AsrEngine {
         short[] buffer = new short[chunk];
         float[] samples = new float[chunk];
 
+        final String tname = Thread.currentThread().getName();
+        long readFail = 0;           // 连续 read 失败计数
+        long totalRead = 0;          // 累计读取字节（采样点数）
+        long lastCbMs = 0L;          // 上次成功 decode 的时间戳
+        long lastBeatMs = System.currentTimeMillis();
+        long iter = 0;               // 迭代计数
+        elog("[loop] enter chunk=" + chunk + " thread=" + tname
+                + " silenceHold=" + SILENCE_HOLD_SEC + "s");
+
         while (running) {
-            int n = audioRecord.read(buffer, 0, chunk);
+            iter++;
+            AudioRecord ar = audioRecord;
+            if (ar == null) {
+                elog("[loop] audioRecord==null, try reopen");
+                if (!openAudio()) {
+                    elog("[loop] reopen FAILED, sleep 500ms");
+                    try { Thread.sleep(500); } catch (InterruptedException ignore) {}
+                    continue;
+                }
+                ar = audioRecord;
+                if (ar == null) continue;
+            }
+
+            int n;
+            long tRead0 = System.currentTimeMillis();
+            try {
+                n = ar.read(buffer, 0, chunk);
+            } catch (Throwable e) {
+                // v1.14: 原本没有这层保护，read 抛异常会让整个 worker 线程静默死亡
+                elog("[loop] read EXCEPTION #" + (readFail + 1) + ": " + e);
+                n = -1;
+            }
+            long readCost = System.currentTimeMillis() - tRead0;
+
             if (n <= 0) {
-                if (n == AudioRecord.ERROR_INVALID_OPERATION || n == AudioRecord.ERROR_BAD_VALUE) {
-                    break;
+                readFail++;
+                long gap = System.currentTimeMillis() - lastBeatMs;
+                if (readFail == 1 || readFail % 50 == 0 || gap > 3000) {
+                    elog("[loop] read ret " + n + " fail#" + readFail
+                            + " cost=" + readCost + "ms gapSinceOk=" + gap + "ms");
                 }
-                try {
-                    Thread.sleep(20);
-                } catch (InterruptedException ignore) {
+                if (n == AudioRecord.ERROR_INVALID_OPERATION
+                        || n == AudioRecord.ERROR_BAD_VALUE
+                        || readFail >= READ_FAIL_LIMIT) {
+                    // v1.14: 原来直接 break 退出循环 → 线程死亡但 running 仍 true，
+                    // 表现为「字幕彻底不动」且无任何报错。改为重建 AudioRecord。
+                    elog("[loop] FATAL read state n=" + n + " fail=" + readFail
+                            + " -> rebuild AudioRecord");
+                    releaseAudio();
+                    try { Thread.sleep(300); } catch (InterruptedException ignore) {}
+                    if (!openAudio()) {
+                        elog("[loop] rebuild openAudio FAILED, sleep 1s");
+                        try { Thread.sleep(1000); } catch (InterruptedException ignore) {}
+                    } else {
+                        elog("[loop] rebuild openAudio OK");
+                        readFail = 0;
+                    }
+                    lastBeatMs = System.currentTimeMillis();
+                    continue;
                 }
+                try { Thread.sleep(20); } catch (InterruptedException ignore) {}
                 continue;
+            }
+
+            // 读成功
+            readFail = 0;
+            lastBeatMs = System.currentTimeMillis();
+            totalRead += n;
+            if (readCost > READ_SLOW_MS) {
+                elog("[loop] SLOW READ cost=" + readCost + "ms n=" + n
+                        + " iter=" + iter + " total=" + totalRead);
             }
 
             float lvl = calcLevel(buffer, n);
@@ -614,14 +694,24 @@ public class SherpaAsrEngine implements AsrEngine {
                 silenceAccum += INTERVAL_SEC;
                 if (!pausedBySilence && silenceAccum >= SILENCE_HOLD_SEC) {
                     pausedBySilence = true;
-                    elog("silence pause after " + (int) silenceAccum + "s");
+                    elog("[loop] silence pause after " + (int) silenceAccum + "s lvl=" + lvl);
                     emitStatus("已静音，等待声音…");
                 }
             } else {
                 silenceAccum = 0f;
                 if (pausedBySilence) {
                     pausedBySilence = false;
-                    elog("silence resume");
+                    elog("[loop] silence resume lvl=" + lvl);
+                    // v1.14: 暂停期间音频被丢弃，stream 内部还留着暂停前的状态，
+                    // 恢复时必须 reset，否则第一句话可能被错误拼接或整句丢失。
+                    try {
+                        if (stream != null) {
+                            recognizer.reset(stream);
+                            elog("[loop] stream reset after silence resume");
+                        }
+                    } catch (Throwable e) {
+                        elog("[loop] reset after resume error: " + e);
+                    }
                     emitStatus("已恢复听写");
                 }
             }
@@ -629,12 +719,14 @@ public class SherpaAsrEngine implements AsrEngine {
                 // 暂停期间只读音频丢弃，不做解码，CPU 占用接近 0
                 continue;
             }
+
             for (int i = 0; i < n; i++) {
                 samples[i] = buffer[i] / 32768.0f;
             }
             float[] input = new float[n];
             System.arraycopy(samples, 0, input, 0, n);
 
+            long tDec0 = System.currentTimeMillis();
             try {
                 stream.acceptWaveform(input, SAMPLE_RATE);
                 while (recognizer.isReady(stream)) {
@@ -662,14 +754,26 @@ public class SherpaAsrEngine implements AsrEngine {
                 } else if (text != null && text.length() > 0) {
                     emitResult(text, false);
                 }
-            } catch (Throwable e) {
-                Log.e(TAG, "decode error", e);
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException ignore) {
+
+                long decCost = System.currentTimeMillis() - tDec0;
+                if (decCost > DECODE_SLOW_MS) {
+                    elog("[loop] SLOW DECODE cost=" + decCost + "ms n=" + n
+                            + " iter=" + iter);
                 }
+                long now = System.currentTimeMillis();
+                if (lastCbMs > 0 && (now - lastCbMs) > GAP_WARN_MS) {
+                    elog("[loop] GAP " + (now - lastCbMs) + "ms since last decode"
+                            + " iter=" + iter + " lvl=" + lvl);
+                }
+                lastCbMs = now;
+            } catch (Throwable e) {
+                elog("[loop] decode EXCEPTION iter=" + iter + ": " + e);
+                Log.e(TAG, "decode error", e);
+                try { Thread.sleep(50); } catch (InterruptedException ignore) {}
             }
         }
+        elog("[loop] exit iter=" + iter + " totalRead=" + totalRead
+                + " running=" + running);
     }
 
     /** 计算音量 0.0~1.0 */
