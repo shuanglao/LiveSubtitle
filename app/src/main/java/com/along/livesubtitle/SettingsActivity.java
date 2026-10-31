@@ -540,6 +540,9 @@ public class SettingsActivity extends Activity {
     // ============================================================
     private TextView tvShizuku;   // 状态行文本
     private boolean shizukuListenerBound = false;
+    private TextView tvShizukuAuth;    // 申请授权按钮
+    private TextView tvShizukuWhite;   // 电池白名单按钮
+    private static final int REQ_SHIZUKU = 1001;
 
     private void addShizukuCard(LinearLayout root) {
         LinearLayout c = card();
@@ -554,6 +557,34 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(8);
         c.addView(tvShizuku, lp);
+
+
+        tvShizukuAuth = accentButton("申请授权", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    Shizuku.requestPermission(REQ_SHIZUKU);
+                } catch (Throwable t) {
+                    Toast.makeText(SettingsActivity.this,
+                            "申请授权失败：" + t.getClass().getSimpleName(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+        LinearLayout.LayoutParams lpA = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        lpA.topMargin = dp(10);
+        c.addView(tvShizukuAuth, lpA);
+
+        tvShizukuWhite = accentButton("加入电池白名单", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                applyBatteryWhitelist();
+            }
+        });
+        LinearLayout.LayoutParams lpW = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        lpW.topMargin = dp(8);
+        c.addView(tvShizukuWhite, lpW);
 
         bindShizukuListeners();
         refreshShizukuState();
@@ -620,6 +651,15 @@ public class SettingsActivity extends Activity {
             text = "● 无法获取状态：" + t.getClass().getSimpleName();
             tvShizuku.setTextColor(C_SUB);
         }
+        // 按钮显隐：未授权只显示授权按钮
+        boolean authed = false;
+        try {
+            authed = Shizuku.pingBinder() && !Shizuku.isPreV11()
+                    && Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable ignored) {
+        }
+        if (tvShizukuAuth != null) tvShizukuAuth.setVisibility(authed ? View.GONE : View.VISIBLE);
+        if (tvShizukuWhite != null) tvShizukuWhite.setVisibility(authed ? View.VISIBLE : View.GONE);
         tvShizuku.setText(text);
     }
 
@@ -825,5 +865,48 @@ public class SettingsActivity extends Activity {
                 recreate();
             }
         }, 150);
+    }
+
+    /** 主色描边按钮，照抄操作 */
+    private TextView accentButton(String text, View.OnClickListener l) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextSize(14f);
+        b.setGravity(Gravity.CENTER);
+        b.setTextColor(C_ACCENT);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.RECTANGLE);
+        g.setColor(0x00000000);
+        g.setStroke(dp(1), C_ACCENT);
+        g.setCornerRadius(dp(14));
+        b.setBackground(g);
+        b.setOnClickListener(l);
+        return b;
+    }
+
+    /** 借 Shizuku 的 shell 权限加白名单 */
+    private void applyBatteryWhitelist() {
+        try {
+            if (!Shizuku.pingBinder()) {
+                Toast.makeText(this, "Shizuku 未运行", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "请先授权", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Process pr = Shizuku.newProcess(
+                    new String[]{"sh", "-c", "dumpsys deviceidle whitelist +com.along.livesubtitle"}, null, null);
+            boolean done = ((rikka.shizuku.ShizukuRemoteProcess) pr).waitForTimeout(5, java.util.concurrent.TimeUnit.SECONDS);
+            int code = done ? pr.exitValue() : -1;
+            if (!done) pr.destroy();
+            if (code == 0) {
+                Toast.makeText(this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "失败：" + code, Toast.LENGTH_SHORT).show();
+            }
+        } catch (Throwable t) {
+            Toast.makeText(this, "异常：" + t.getClass().getSimpleName(), Toast.LENGTH_SHORT).show();
+        }
     }
 }
