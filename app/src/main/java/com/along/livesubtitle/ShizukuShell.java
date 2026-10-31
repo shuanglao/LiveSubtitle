@@ -71,6 +71,18 @@ public final class ShizukuShell {
                         while ((line = br.readLine()) != null) {
                             sb.append(line).append(10);
                         }
+                        // stderr 也并入，部分 ROM 把 cmd 输出写到 stderr
+                        try {
+                            InputStream es = fp.getErrorStream();
+                            if (es != null) {
+                                BufferedReader eb = new BufferedReader(new InputStreamReader(es, "UTF-8"));
+                                String el;
+                                while ((el = eb.readLine()) != null) {
+                                    sb.append(el).append(10);
+                                }
+                            }
+                        } catch (Throwable ignored2) {
+                        }
                     } catch (Throwable ignored) {
                     }
                 }
@@ -106,14 +118,16 @@ public final class ShizukuShell {
 
     /** 执行单条命令（默认 8 秒超时） */
     public static Result exec(String cmd) {
-        return exec(new String[]{"sh", "-c", cmd}, 8000L);
+        return exec(new String[]{"/system/bin/sh", "-c", cmd}, 8000L);
     }
 
     /** 给包名加电池白名单；成功判定为输出含 Added */
     public static boolean addPowerWhitelist(String pkg) {
         if (pkg == null || pkg.length() == 0) return false;
         Result r = exec("cmd deviceidle whitelist +" + pkg);
-        return r.contains("Added:") || r.contains("already");
+        if (r.contains("Added:") || r.contains("already")) return true;
+        // 命令可能无输出（部分 ROM 静默成功），用查询复核一次
+        return isPowerWhitelisted(pkg);
     }
 
     /**
