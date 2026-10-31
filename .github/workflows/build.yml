@@ -48,8 +48,28 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Decode keystore for stable signing
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          mkdir -p keystore
+          echo "$KEYSTORE_B64" | base64 -d > keystore/livesubtitle.jks
+          ls -l keystore/
+          keytool -list -v -keystore keystore/livesubtitle.jks \
+            -storepass "${{ secrets.KEYSTORE_PASS }}" 2>/dev/null | grep -i 'SHA256:' || true
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASS }}
+          K_ALIAS: ${{ secrets.KEY_ALIAS }}
+          K_PASS: ${{ secrets.KEY_PASS }}
+        run: |
+          ./gradlew assembleDebug --stacktrace --no-daemon \
+            -PLS_STORE_FILE="$PWD/keystore/livesubtitle.jks" \
+            -PLS_STORE_PASS="$KS_PASS" \
+            -PLS_KEY_ALIAS="$K_ALIAS" \
+            -PLS_KEY_PASS="$K_PASS"
 
       - name: Upload APK
         if: success()

@@ -22,3 +22,8 @@ app/libs/*.aar
 p*.py
 chk.py
 dl/
+
+# 签名文件不入库（密钥，通过 GitHub Secrets 传递）
+keystore/
+*.jks
+*.keystore
