@@ -133,6 +133,10 @@ public class CaptionWindow {
     private final ArrayList<String> finalLines = new ArrayList<String>();
     /** 当前临时文本 */
     private String pendingText = "";
+    /** v1.11 第2条：finalLines 拼接缓存，避免每次重绘都重新拼一遍 */
+    private String cachedFinal = null;
+    /** 缓存失效标志：finalLines 有任何变化就置 true */
+    private boolean finalDirty = true;
 
     // 拖动/缩放用的临时状态
     private float downRawX, downRawY;
@@ -581,6 +585,7 @@ public class CaptionWindow {
                         while (finalLines.size() > keep) {
                             finalLines.remove(0);
                         }
+                        finalDirty = true;
                         // 有一句真正定稿了：强制跟到最新行
                         broadcastNewLine = true;
                     }
@@ -599,6 +604,7 @@ public class CaptionWindow {
             @Override
             public void run() {
                 finalLines.clear();
+                finalDirty = true;
                 pendingText = "";
                 applyTextToViews();
             }
@@ -614,12 +620,17 @@ public class CaptionWindow {
         }
 
         if (prefs.isShowHistory() && !finalLines.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < finalLines.size(); i++) {
-                if (i > 0) sb.append('\n');
-                sb.append(finalLines.get(i));
+            // v1.11 第2条：只在 finalLines 真变化时拼接，否则复用缓存
+            if (finalDirty || cachedFinal == null) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < finalLines.size(); i++) {
+                    if (i > 0) sb.append('\n');
+                    sb.append(finalLines.get(i));
+                }
+                cachedFinal = sb.toString();
+                finalDirty = false;
             }
-            tvFinal.setText(sb.toString());
+            tvFinal.setText(cachedFinal);
             tvFinal.setVisibility(View.VISIBLE);
             // 异步滚到最新：但只有「原本就贴底」时才跟随，
             // 避免用户正在上滑翻历史时被强行拽回底部。

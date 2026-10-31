@@ -122,8 +122,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             if (cnt > 1) {
                 // 60 秒内第 2 次被拉起 = 上一轮没活下来。继续重建只会死螺旋，
                 // 直接把 enabled 清掉并收手，让用户重新在 App 内点「开始」。
-                logf("sticky restart ABORT (count=" + cnt + " in 60s), clear enabled & stopSelf");
-                prefs.setEnabled(false);
+                // v1.11: 不再清 enabled —— 清开关会让用户下次打开 App 看到「开关自己关了」的困惑状态，且手机压力大时字幕会永久停住。这里只 stopSelf，用户点「开始」随时能重新走完整链路，防螺旋效果与旧版完全一致。
+                logf("sticky restart ABORT (count=" + cnt + " in 60s), stopSelf (enabled kept)");
                 stopSelf();
                 return START_NOT_STICKY;
             }

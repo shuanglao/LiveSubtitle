@@ -28,7 +28,15 @@ import java.util.Locale;
 public final class Lg {
 
     /** 发版前把这里置 false，则所有落盘与 logcat 输出全部静默 */
+    /** v1.11 第3条：由 BuildConfig.DEBUG 自动判定 */
     private static volatile boolean DEBUG = true;
+    static {
+        try {
+            DEBUG = BuildConfig.DEBUG;
+        } catch (Throwable ignore) {
+            DEBUG = true;
+        }
+    }
 
     /** 单个日志文件上限，超了截断重写 */
     private static final long MAX_BYTES = 256L * 1024L;
@@ -42,24 +50,32 @@ public final class Lg {
 
     public static void setDebug(boolean d) { DEBUG = d; }
 
-    /** 服务/窗口日志，写 files/svc.log */
+    /** 服务/窗口日志，写 files/svc.log（仅 Debug 包）*/
     public static void svc(Context c, String msg) {
+        if (!DEBUG) return;
         write(c, "svc.log", msg);
     }
 
-    /** 引擎日志，写 files/dllog.txt */
+    /** 引擎日志，写 files/dllog.txt（仅 Debug 包）*/
     public static void eng(Context c, String msg) {
+        if (!DEBUG) return;
         write(c, "dllog.txt", msg);
     }
 
-    /** 下载失败专用，写 files/dl_err.txt */
+    /** 下载失败专用，写 files/dl_err.txt（永远写）*/
     public static void err(Context c, String msg) {
         write(c, "dl_err.txt", msg);
     }
 
+    /** v1.11 第3条：关键事件，Release 包也要写，写 files/svc.log */
+    public static void critical(Context c, String msg) {
+        write(c, "svc.log", "[CRIT] " + msg);
+    }
+
     /** 核心写盘；任何 IO 异常都吞掉，日志绝不影响主流程 */
     private static void write(Context c, String name, String msg) {
-        if (!DEBUG) return;
+        // v1.11 第3条：早退已上移到 svc()/eng()，此处不再拦，
+        // 否则 err()/critical() 在 Release 包会连取证记录都丢掉。
         if (c == null || msg == null) return;
         try {
             Log.d("LiveSubtitle", msg);
