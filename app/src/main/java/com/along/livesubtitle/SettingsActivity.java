@@ -386,6 +386,28 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        // ---------------- 崩溃自恢复 ----------------
+        LinearLayout cardHb = card();
+        root.addView(cardHb, cardLp());
+        cardTitle(cardHb, "崩溃自恢复", "被系统杀后自动重开字幕（约 15 分钟一次，略耗电）");
+
+        Switch swHb = new Switch(this);
+        swHb.setChecked(prefs.isHeartbeat());
+        LinearLayout.LayoutParams swHbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swHbLp.topMargin = dp(6);
+        cardHb.addView(swHb, swHbLp);
+        swHb.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                prefs.setHeartbeat(checked);
+                Toast.makeText(SettingsActivity.this,
+                        checked ? "已开启自恢复，下次开启字幕后生效"
+                                : "已关闭自恢复",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+
         // ---------------- 音频模式 ----------------
         LinearLayout card7 = card();
         root.addView(card7, cardLp());
@@ -884,48 +906,29 @@ public class SettingsActivity extends Activity {
         return b;
     }
 
-    /** 借 Shizuku 的 shell 权限把本应用加入电池优化白名单 */
+    /** 借 Shizuku 的 shell 身份把本应用加入电池优化白名单。
+     * 走 `cmd deviceidle whitelist +pkg`，等价于 adb shell，实测可用。 */
     private void applyBatteryWhitelist() {
-        try {
-            if (!Shizuku.pingBinder()) {
-                Toast.makeText(this, "Shizuku 未运行", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "请先授权", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            boolean ok = shizukuAddPowerWhitelist(getPackageName());
-            if (ok) {
-                Toast.makeText(this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "失败：" + "系统服务不可用", Toast.LENGTH_SHORT).show();
-            }
-        } catch (Throwable t) {
-            Toast.makeText(this, "异常：" + t.getClass().getSimpleName(), Toast.LENGTH_SHORT).show();
+        final String pkg = getPackageName();
+        if (!ShizukuShell.available()) {
+            Toast.makeText(this, "Shizuku 未运行或未授权", Toast.LENGTH_SHORT).show();
+            return;
         }
-    }
-
-    /**
-     * 用 ShizukuBinderWrapper 包装 deviceidle 的 binder，反射 IDeviceIdleController
-     * 调用 addPowerSaveWhitelistApp(String)。全程不执行 shell，只走公开 API。
-     */
-    private boolean shizukuAddPowerWhitelist(String pkg) {
-        try {
-            Class<?> smCls = Class.forName("android.os.ServiceManager");
-            Object raw = smCls.getMethod("getService", String.class).invoke(null, "deviceidle");
-            if (raw == null) return false;
-            Object wrapped = Class.forName("rikka.shizuku.ShizukuBinderWrapper")
-                    .getConstructor(android.os.IBinder.class).newInstance((android.os.IBinder) raw);
-            String stubName = "android.os.IDeviceIdleController" + Character.toString((char) 36) + "Stub";
-            Class<?> stub = Class.forName(stubName);
-            Object ctrl = stub.getMethod("asInterface", android.os.IBinder.class)
-                    .invoke(null, wrapped);
-            if (ctrl == null) return false;
-            ctrl.getClass().getMethod("addPowerSaveWhitelistApp", String.class).invoke(ctrl, pkg);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final boolean ok = ShizukuShell.addPowerWhitelist(pkg);
+                final boolean inList = ok || ShizukuShell.isPowerWhitelisted(pkg);
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (inList) {
+                            Toast.makeText(SettingsActivity.this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(SettingsActivity.this, "失败：命令未生效", Toast.LENGTH_SHORT).show();
+                        }
+                        refreshShizukuState();
+                    }
+                });
+            }
+        }).start();
     }
 }

@@ -42,6 +42,16 @@ public class Prefs {
         sp.edit().putLong("sticky_window_at", v).commit();
     }
 
+    // ---------- 心跳复活（故障自恢复） ----------
+    /** 是否开启心跳自恢复（默认关，用户主动开才生效） */
+    public boolean isHeartbeat() {
+        return sp.getBoolean("heartbeat", false);
+    }
+
+    public void setHeartbeat(boolean v) {
+        sp.edit().putBoolean("heartbeat", v).commit();
+    }
+
     // ---------- 音频模式 ----------
     /** 0 = 麦克风，1 = 内录（MediaProjection），2 = 自动（内录失败降级麦克风） */
     public int getAudioMode() {

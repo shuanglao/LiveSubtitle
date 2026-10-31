@@ -70,6 +70,11 @@
             </intent-filter>
         </service>
 
+        <!-- ③ 层２：心跳复活接收器（AlarmManager 定时唤醒） -->
+        <receiver
+            android:name=".HeartbeatReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

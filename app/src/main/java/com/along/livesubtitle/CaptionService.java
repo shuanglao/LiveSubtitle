@@ -142,6 +142,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         if (action == null) action = ACTION_START;
         if (ACTION_STOP.equals(action)) {
             userStarted = false;
+            // ③ 层２：用户主动停止，断开心跳，永不复活
+            HeartbeatReceiver.cancel(this);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -250,6 +252,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     @Override
     public void onDestroy() {
         ALIVE = false;
+        // ③ 层1：进程销毁前摘掉巡检，避免 Handler 泄漏
+        stopWatchdog();
         // 关键修复（窗口泄漏）：旧代码先把 window 置 null 再调 stopCaption()，
         // 导致 stopCaption() 里的 window.hide() 永远走不到 → View 从不 removeView，
         // 一直挂在 WindowManager 上。Service 死了窗口还在，下次启动又建一个 → 窗口越叠越多。
@@ -305,6 +309,18 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             }
             window = null;
         }
+        // ② 麦克风体检：开字幕前先看一眼有没有别人在录音。
+        // 不阻断流程（稳字优先），只提示；取不到信息就不提示，不谎报。
+        try {
+            final String selfPkg = getPackageName();
+            final String hint = ShizukuShell.micBusyHint(selfPkg);
+            if (hint != null && hint.length() > 0) {
+                logf("micBusyHint: " + hint);
+                toast("麦克风可能被占用：" + hint);
+            }
+        } catch (Throwable t) {
+            logf("micBusyHint FAILED: " + Log.getStackTraceString(t));
+        }
         running = true;
         // 提前落盘：只要决定开字幕，立刻把 enabled 写成 true。
         // 之前写在 startEngine 之后，引擎一抛异常这行就可能被跳过，
@@ -342,6 +358,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             logf("updateNotification FAILED: " + Log.getStackTraceString(t));
         }
         logf("startCaption done");
+        // ③ 层1：启动自愈巡检（重复调用安全，内部会先 stop）
+        startWatchdog();
+        // ③ 层２：订阅下一次心跳（进程死了也能复活）
+        HeartbeatReceiver.schedule(this, HeartbeatReceiver.INTERVAL_MS);
     }
 
     private void startEngine() {
@@ -394,6 +414,95 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                 if (window != null) window.onEngineStatusKind(msg, pct, kind);
             }
         });
+    }
+
+    // ============================================================
+    //  ③ 层1：进程内自愈巡检
+    //  场景：Service 活着（进程在、通知在），但引擎已挂 / 窗口已失效。
+    //  老版本只能靠用户手动去通知栏点「重启」或重开 App，这里自动兜住。
+    //  安全阀：连续 3 次自愈无效就停手并提示，绝不进入死循环。
+    // ============================================================
+    private static final long WATCHDOG_INTERVAL_MS = 30000L;
+    private static final int WATCHDOG_MAX_RECOVER = 3;
+    private android.os.Handler watchdogHandler = null;
+    private Runnable watchdogTask = null;
+    private int watchdogRecoverCount = 0;
+    private boolean watchdogStopped = false;
+
+    private void startWatchdog() {
+        try {
+            stopWatchdog();
+            if (watchdogHandler == null) {
+                watchdogHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            }
+            final Runnable[] holder = new Runnable[1];
+            holder[0] = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        watchdogTick();
+                    } catch (Throwable t) {
+                        logf("watchdog tick FAILED: " + Log.getStackTraceString(t));
+                    }
+                    if (!watchdogStopped && watchdogHandler != null) {
+                        watchdogHandler.postDelayed(holder[0], WATCHDOG_INTERVAL_MS);
+                    }
+                }
+            };
+            watchdogTask = holder[0];
+            watchdogStopped = false;
+            watchdogHandler.postDelayed(watchdogTask, WATCHDOG_INTERVAL_MS);
+            logf("watchdog started (interval=" + WATCHDOG_INTERVAL_MS + "ms)");
+        } catch (Throwable t) {
+            logf("watchdog start FAILED: " + Log.getStackTraceString(t));
+        }
+    }
+
+    private void stopWatchdog() {
+        watchdogStopped = true;
+        if (watchdogHandler != null && watchdogTask != null) {
+            try {
+                watchdogHandler.removeCallbacks(watchdogTask);
+            } catch (Throwable ignore) {
+            }
+        }
+        watchdogTask = null;
+    }
+
+    /** 巡检一次：只判断「该活却没活着」这一种情况，不做任何聪明事 */
+    private void watchdogTick() {
+        if (!running) {
+            // 用户没在跑字幕（或已 stop），巡检没有意义
+            return;
+        }
+        if (!prefs.isEnabled()) {
+            // 用户总闸关了，绝不自愈，避免把用户主动停掉的服务又拉起来
+            logf("watchdog: prefs.enabled=false, self-heal skipped");
+            return;
+        }
+        boolean engineDead = (engine == null);
+        boolean winDead = (window == null) || (!window.isShowing());
+        if (!engineDead && !winDead) {
+            // 一切正常，清空失败计数
+            if (watchdogRecoverCount != 0) {
+                watchdogRecoverCount = 0;
+            }
+            return;
+        }
+        if (watchdogRecoverCount >= WATCHDOG_MAX_RECOVER) {
+            logf("watchdog: recoverCount reached " + WATCHDOG_MAX_RECOVER + ", give up (engineDead=" + engineDead + ", winDead=" + winDead + ")");
+            toast("字幕自愈多次失败，请手动重启服务");
+            watchdogStopped = true;
+            return;
+        }
+        watchdogRecoverCount++;
+        logf("watchdog: self-heal #" + watchdogRecoverCount + " (engineDead=" + engineDead + ", winDead=" + winDead + ")");
+        try {
+            startCaption();
+            logf("watchdog: startCaption re-entered OK");
+        } catch (Throwable t) {
+            logf("watchdog: startCaption re-enter FAILED: " + Log.getStackTraceString(t));
+        }
     }
 
     private void stopEngine() {
