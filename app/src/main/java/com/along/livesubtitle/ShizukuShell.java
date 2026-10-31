@@ -99,7 +99,7 @@ public final class ShizukuShell {
             if (p != null) {
                 try { p.destroy(); } catch (Throwable ignored) {}
             }
-            Lg.w("ShizukuShell exec FAILED: " + t.getClass().getSimpleName() + " " + t.getMessage());
+            // 纯静态工具类拿不到 Context，Lg 需要 Context，这里不记日志；失败已通过返回值表达
             return FAIL;
         }
     }
