@@ -884,7 +884,7 @@ public class SettingsActivity extends Activity {
         return b;
     }
 
-    /** 借 Shizuku 的 shell 权限加白名单 */
+    /** 借 Shizuku 的 shell 权限把本应用加入电池优化白名单 */
     private void applyBatteryWhitelist() {
         try {
             if (!Shizuku.pingBinder()) {
@@ -895,18 +895,37 @@ public class SettingsActivity extends Activity {
                 Toast.makeText(this, "请先授权", Toast.LENGTH_SHORT).show();
                 return;
             }
-            Process pr = Shizuku.newProcess(
-                    new String[]{"sh", "-c", "dumpsys deviceidle whitelist +com.along.livesubtitle"}, null, null);
-            boolean done = ((rikka.shizuku.ShizukuRemoteProcess) pr).waitForTimeout(5, java.util.concurrent.TimeUnit.SECONDS);
-            int code = done ? pr.exitValue() : -1;
-            if (!done) pr.destroy();
-            if (code == 0) {
+            boolean ok = shizukuAddPowerWhitelist(getPackageName());
+            if (ok) {
                 Toast.makeText(this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "失败：" + code, Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "失败：" + "系统服务不可用", Toast.LENGTH_SHORT).show();
             }
         } catch (Throwable t) {
             Toast.makeText(this, "异常：" + t.getClass().getSimpleName(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * 用 ShizukuBinderWrapper 包装 deviceidle 的 binder，反射 IDeviceIdleController
+     * 调用 addPowerSaveWhitelistApp(String)。全程不执行 shell，只走公开 API。
+     */
+    private boolean shizukuAddPowerWhitelist(String pkg) {
+        try {
+            Class<?> smCls = Class.forName("android.os.ServiceManager");
+            Object raw = smCls.getMethod("getService", String.class).invoke(null, "deviceidle");
+            if (raw == null) return false;
+            Object wrapped = Class.forName("rikka.shizuku.ShizukuBinderWrapper")
+                    .getConstructor(android.os.IBinder.class).newInstance((android.os.IBinder) raw);
+            String stubName = "android.os.IDeviceIdleController" + Character.toString((char) 36) + "Stub";
+            Class<?> stub = Class.forName(stubName);
+            Object ctrl = stub.getMethod("asInterface", android.os.IBinder.class)
+                    .invoke(null, wrapped);
+            if (ctrl == null) return false;
+            ctrl.getClass().getMethod("addPowerSaveWhitelistApp", String.class).invoke(ctrl, pkg);
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 }
