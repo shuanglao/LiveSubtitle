@@ -195,10 +195,24 @@ public final class ShizukuShell {
                 try {
                     int rc = p.exitValue();
                     done = true;
-                    reader.join(300);
-                    return new Result(rc, sb.toString());
-                } catch (IllegalThreadStateException stillRunning) {
+                    try { reader.join(500); } catch (InterruptedException ignoreJoin) {}
+                    String body = sb.toString();
+                    if (body.length() == 0) {
+                        // [diag] 进程已退出但没读到任何输出：把 stderr 也一起抛出来
+                        // 情况：命令自身无输出 / 读流被提前关闭 / reader 尚未 flushed
+                        return new Result(rc, "EmptyOut:rc=" + rc);
+                    }
+                    return new Result(rc, body);
+                } catch (Throwable stillRunning) {
+                    // [diag] 关键修复（alpha11）：
+                    //   Java 的 Process.exitValue() 在“进程尚未结束”时抛的是
+                    //   java.lang.IllegalArgumentException: process hasn't exited
+                    //   （不是 IllegalThreadStateException，那是 Thread 类的异常）。
+                    //   旧代码 catch 类型写错 -> 异常逃到最外层 -> 恒返回 -9 ReadFail，
+                    //   且 exitValue 第一轮就抛，轮询从未生效、sb 一个字符都没攒。
+                    //   这里统一 catch Throwable 接住两种实现差异，由 deadline 保证不会死循环。
                     try { Thread.sleep(50); } catch (InterruptedException ie) { break; }
+                    continue;
                 }
             }
             if (!done) {
