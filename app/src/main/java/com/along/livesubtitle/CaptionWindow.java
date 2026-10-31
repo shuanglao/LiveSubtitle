@@ -17,6 +17,8 @@ import java.io.OutputStreamWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -146,6 +148,37 @@ public class CaptionWindow {
     private int screenW, screenH;
 
     /** 写 svc.log（统一委托 Lg，与 CaptionService 共用同一文件） */
+    /** v1.12 功能8：把文本写入系统剪贴板，空内容给轻提示。 */
+    /** v1.12 功能8：供通知栏「复制」Action 调用，拷贝全部历史字幕。 */
+    public void copyAll() {
+        String txt = cachedFinal == null ? "" : cachedFinal.toString();
+        if (txt == null || txt.trim().length() == 0) {
+            // 无历史时回退到当前句
+            txt = pendingText == null ? "" : pendingText.trim();
+            copyToClipboard(txt, "当前字幕");
+        } else {
+            copyToClipboard(txt, "全部字幕");
+        }
+    }
+
+    private void copyToClipboard(String text, String label) {
+        try {
+            if (text == null || text.trim().length() == 0) {
+                android.widget.Toast.makeText(ctx, "暂无可复制的字幕",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null) return;
+            cm.setPrimaryClip(ClipData.newPlainText("subtitle", text));
+            wlog("[copy] " + label + " len=" + text.length());
+            android.widget.Toast.makeText(ctx, "已复制" + label,
+                    android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            wlog("[copy] FAILED " + t);
+        }
+    }
+
     private void wlog(String msg) {
         Lg.svc(ctx, "[win] " + msg);
     }
@@ -304,6 +337,26 @@ public class CaptionWindow {
             public boolean onLongClick(View v) {
                 wlog("tvClose LONG_CLICK -> onClose confirmed by user");
                 if (listener != null) listener.onClose();
+                return true;
+            }
+        });
+
+        // v1.12 功能8：长按字幕区一键复制
+        // tvFinal = 历史全区（灰字），tvBody = 当前句
+        // 锁定态下窗口整体 FLAG_NOT_TOUCHABLE，长按自然失效，无需额外处理。
+        tvFinal.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                String txt = cachedFinal == null ? "" : cachedFinal.toString();
+                copyToClipboard(txt, "历史字幕");
+                return true;
+            }
+        });
+        tvBody.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                String txt = pendingText == null ? "" : pendingText.trim();
+                copyToClipboard(txt, "当前字幕");
                 return true;
             }
         });

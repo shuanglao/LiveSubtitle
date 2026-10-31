@@ -184,4 +184,16 @@ public class Prefs {
     public void setBgColor(int v) {
         sp.edit().putInt("bg_color", v).apply();
     }
+
+    /**
+     * v1.12 字幕颜色预设：0=经典 1=高对比 2=夜间。
+     * 这个值只用于设置页高亮当前选中项，
+     * 实际颜色仍以 text_color / bg_color 为准（手动改色后预设会被重置为 -1）。
+     */
+    public int getColorPreset() {
+        return sp.getInt("color_preset", 0);
+    }
+    public void setColorPreset(int v) {
+        sp.edit().putInt("color_preset", v).apply();
+    }
 }

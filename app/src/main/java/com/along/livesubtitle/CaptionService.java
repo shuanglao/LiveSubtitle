@@ -33,6 +33,8 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     public static final String ACTION_TOGGLE_SHOW = "com.along.livesubtitle.TOGGLE_SHOW";
     /** 通知栏：一键重启字幕（服务异常/卡死时救命） */
     public static final String ACTION_RESTART = "com.along.livesubtitle.RESTART";
+    /** v1.12 功能8：通知栏一键复制当前全部字幕 */
+    public static final String ACTION_COPY = "com.along.livesubtitle.COPY";
 
     private static final String CHANNEL_ID = "live_subtitle";
     /** PendingIntent 不可变标志（Android 12+ 必需，否则点击无响应） */
@@ -153,6 +155,21 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                     + ", showing=" + (window != null && window.isShowing()) + ")");
             updateNotification(next);
             toast(next ? "已锁定：触摸穿透，解锁请点通知栏" : "已解锁：可拖动调整");
+            return START_STICKY;
+        }
+        if (ACTION_COPY.equals(action)) {
+            // v1.12 功能8：通知栏一键复制全部字幕
+            if (window == null) {
+                logf("ACTION_COPY ignored (window==null)");
+                toast("字幕窗尚未就绪");
+                return START_STICKY;
+            }
+            try {
+                window.copyAll();
+                logf("ACTION_COPY done");
+            } catch (Throwable t) {
+                logf("ACTION_COPY FAILED: " + Log.getStackTraceString(t));
+            }
             return START_STICKY;
         }
         if (ACTION_TOGGLE_SHOW.equals(action)) {
@@ -508,6 +525,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         restart.setAction(ACTION_RESTART);
         PendingIntent piRestart = PendingIntent.getService(
                 this, 4, restart, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
+        Intent copy = new Intent(this, CaptionService.class);
+        copy.setAction(ACTION_COPY);
+        PendingIntent piCopy = PendingIntent.getService(
+                this, 5, copy, PendingIntent.FLAG_UPDATE_CURRENT | PI_IMMUTABLE);
 
         String text;
         if (locked && showing) {
@@ -536,6 +557,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
                         locked ? "解锁" : "锁定", piLock)
                 .addAction(android.R.drawable.ic_menu_view,
                         showing ? "隐藏" : "显示", piShowHide)
+                // v1.12 功能8：复制放第 3 位，保证折叠态三个 Action 里能看到
+                .addAction(android.R.drawable.ic_menu_save,
+                        "复制", piCopy)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel,
                         "停止", piStop)
                 .addAction(android.R.drawable.ic_menu_rotate,

@@ -148,6 +148,50 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        // ---------------- v1.12 功能5：字幕颜色预设 ----------------
+        LinearLayout cardPreset = card();
+        root.addView(cardPreset, cardLp());
+        cardTitle(cardPreset, "字幕颜色预设", "一键切换文字+背景配色");
+        final String[] presetNames = {"经典", "高对比", "夜间"};
+        final int[] presetText = {0xFFFFFFFF, 0xFF000000, 0xFFFFE8C8};
+        final int[] presetBg = {0xFF000000, 0xFFFFE14D, 0xFF000000};
+        LinearLayout presetSeg = new LinearLayout(this);
+        presetSeg.setOrientation(LinearLayout.HORIZONTAL);
+        presetSeg.setBackground(rounded(C_SEG_IDLE, 16));
+        presetSeg.setPadding(dp(4), dp(4), dp(4), dp(4));
+        LinearLayout.LayoutParams presetSegLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        presetSegLp.topMargin = dp(10);
+        cardPreset.addView(presetSeg, presetSegLp);
+        int curPreset = prefs.getColorPreset();
+        for (int i = 0; i < presetNames.length; i++) {
+            final int pi = i;
+            boolean sel = (curPreset == i);
+            TextView b = new TextView(this);
+            b.setText(presetNames[i]);
+            b.setTextSize(13.5f);
+            b.setGravity(Gravity.CENTER);
+            b.setTypeface(null, sel ? android.graphics.Typeface.BOLD
+                    : android.graphics.Typeface.NORMAL);
+            b.setTextColor(sel ? Color.WHITE : C_SUB);
+            b.setBackground(rounded(sel ? C_ACCENT : Color.TRANSPARENT, 12));
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, dp(36), 1f);
+            if (i > 0) blp.leftMargin = dp(4);
+            presetSeg.addView(b, blp);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.setTextColor(presetText[pi]);
+                    prefs.setBgColor(presetBg[pi]);
+                    prefs.setColorPreset(pi);
+                    notifyStyleChanged();
+                    rebuildLater();
+                    Toast.makeText(SettingsActivity.this,
+                            "颜色预设：" + presetNames[pi], Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
         // ---------------- 字号 ----------------
         LinearLayout card2 = card();
         root.addView(card2, cardLp());
@@ -165,13 +209,50 @@ public class SettingsActivity extends Activity {
                 }
             }
         });
+        // v1.12 功能6：字号快捷档位
+        final int[] fontPreset = {14, 20, 28, 34};
+        final String[] fontPresetName = {"小", "中", "大", "超大"};
+        LinearLayout fontSeg = new LinearLayout(this);
+        fontSeg.setOrientation(LinearLayout.HORIZONTAL);
+        fontSeg.setBackground(rounded(C_SEG_IDLE, 16));
+        fontSeg.setPadding(dp(4), dp(4), dp(4), dp(4));
+        LinearLayout.LayoutParams fontSegLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        fontSegLp.topMargin = dp(10);
+        card2.addView(fontSeg, fontSegLp);
+        int curFont = (int) prefs.getFontSize();
+        for (int i = 0; i < fontPreset.length; i++) {
+            final int fv = fontPreset[i];
+            boolean sel = (Math.abs(curFont - fv) <= 1);
+            TextView b = new TextView(this);
+            b.setText(fontPresetName[i]);
+            b.setTextSize(13f);
+            b.setGravity(Gravity.CENTER);
+            b.setTypeface(null, sel ? android.graphics.Typeface.BOLD
+                    : android.graphics.Typeface.NORMAL);
+            b.setTextColor(sel ? Color.WHITE : C_SUB);
+            b.setBackground(rounded(sel ? C_ACCENT : Color.TRANSPARENT, 12));
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, dp(34), 1f);
+            if (i > 0) blp.leftMargin = dp(4);
+            fontSeg.addView(b, blp);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.setFontSize((float) fv);
+                    notifyStyleChanged();
+                    rebuildLater();
+                }
+            });
+        }
 
         // ---------------- 行数 ----------------
         LinearLayout card3 = card();
         root.addView(card3, cardLp());
 
         final TextView tvLines = cardTitle(card3, "最多显示行数", prefs.getMaxLines() + " 行");
-        SeekBar sbLines = seek(card3, 1, 10, prefs.getMaxLines());
+        // 超过 8 行时窗口内自动滚动，旧行会被裁掉（受窗口高度限制）
+        cardTitle(card3, "滚动说明", "超过 8 行可上下滑动查看，超出部分会被自动移除");
+        SeekBar sbLines = seek(card3, 1, 20, prefs.getMaxLines());
         sbLines.setOnSeekBarChangeListener(new SimpleSeek(1) {
             @Override
             public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
