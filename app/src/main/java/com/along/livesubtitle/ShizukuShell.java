@@ -3,15 +3,29 @@ package com.along.livesubtitle;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+
+import rikka.shizuku.Shizuku;
 import java.lang.reflect.Method;
 
 /**
  * Shizuku shell 封装。
  *
- * 用反射调用 Shizuku.newProcess（private），以 Shizuku(shell) 身份执行命令。
- * 之所以不用 ShizukuBinderWrapper 直连系统 @hide 服务：
+ * 【alpha12 方案 B 说明（重要，勿再误判）】
+ * 曾计划「方案 Y：引官方库直调，彻底砍掉反射」，但拆开
+ * dev.rikka.shizuku:api:13.1.5 的 AAR 逐个方法验证后发现两件事：
+ *   1) Shizuku.newProcess(String[],String[],String) 是 private static，
+ *      返回 ShizukuRemoteProcess，外部无法直接调用；
+ *   2) Shizuku 根本没有 getPackagesForUid(int) 这个 public 方法（58 个
+ *      public 成员里查无此项）。
+ * 因此「全部改直调」物理上不可行。最终采用方案 B（半保留）：
+ *   - available()  -> 官方直调 Shizuku.pingBinder()/checkSelfPermission()（纯收益）
+ *   - exec() 主体  -> 仍用反射调 private newProcess（alpha11 已实机验证通过）
+ *   - uidToPkg()   -> 仍用反射查包名（官方未暴露该 API）
+ * 反射未彻底清除，是为了功能可用；等 Shizuku 未来公开对应 API 再迁移。
+ *
+ * 为什么走 shell 命令而不是 ShizukuBinderWrapper 直连 @hide 服务：
  * deviceidle 等 @hide 服务会校验 caller 与 binder 归属，wrapper 换身份后会被拒。
- * 走 shell 命令则完全等价于 adb shell，权限通路已验证可用。
+ * 走 shell 命令则完全等价于 adb shell，权限通路已在 alpha11 验证可用。
  */
 public final class ShizukuShell {
 
@@ -34,15 +48,21 @@ public final class ShizukuShell {
 
     private static final Result FAIL = new Result(-1, "");
 
-    /** Shizuku 是否可用（服务和权限都就绪） */
+    /**
+     * Shizuku 是否可用（alpha12 方案 B：可用性检查改官方 API 直调）。
+     *
+     * 与 alpha11 的区别：不再用 Class.forName + 反射调用，直接调用官方 AAR
+     * 的 public 静态方法。官方 13.1.5 明确公开了这两个 API：
+     *   public static boolean pingBinder()
+     *   public static int     checkSelfPermission()   // 0 = GRANTED
+     * 比反射更可靠：不受 hidden API 限制、方法名/签名由编译器校验。
+     */
     public static boolean available() {
         try {
-            Class<?> c = Class.forName("rikka.shizuku.Shizuku");
-            boolean ping = (Boolean) c.getMethod("pingBinder").invoke(null);
-            if (!ping) return false;
-            int perm = (Integer) c.getMethod("checkSelfPermission").invoke(null);
-            return perm == 0;
+            if (!Shizuku.pingBinder()) return false;
+            return Shizuku.checkSelfPermission() == 0;
         } catch (Throwable t) {
+            // binder 未就绪、Shizuku 未安装、权限被拒等，一律视为不可用
             return false;
         }
     }
