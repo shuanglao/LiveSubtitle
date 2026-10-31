@@ -50,6 +50,9 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     /** 用户通过通知栏手动隐藏了窗口（穿透后仍可唤回，与锁定状态独立） */
     private boolean hiddenByUser = false;
     private long aliveAt = System.currentTimeMillis();
+    /** 服务是否真实存活（供 MainActivity 判断主按钮状态，
+     *  避免 prefs.enabled 与真实运行态脱钩导致界面不同步）。*/
+    public static volatile boolean ALIVE = false;
 
     // ============================================================
     //  生命周期
@@ -61,6 +64,7 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         prefs = new Prefs(this);
         createChannel();
         installCrashHandler();
+        ALIVE = true;
         logf("onCreate DONE pid=" + android.os.Process.myPid() + " enabled=" + prefs.isEnabled());
     }
 
@@ -245,6 +249,7 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
 
     @Override
     public void onDestroy() {
+        ALIVE = false;
         // 关键修复（窗口泄漏）：旧代码先把 window 置 null 再调 stopCaption()，
         // 导致 stopCaption() 里的 window.hide() 永远走不到 → View 从不 removeView，
         // 一直挂在 WindowManager 上。Service 死了窗口还在，下次启动又建一个 → 窗口越叠越多。

@@ -342,7 +342,9 @@ public class MainActivity extends Activity {
         }
         btnToggle.setEnabled(true);
         btnToggle.setAlpha(1f);
-        boolean on = prefs.isEnabled();
+        // 修复状态不同步：不能只看持久化的 prefs.enabled，
+        // 还要确认服务进程真的还活着，否则停了还显示「停止字幕」。
+        boolean on = prefs.isEnabled() && CaptionService.ALIVE;
         btnToggle.setText(on ? "停止字幕" : "开启字幕");
         btnToggle.setBackground(rounded(on ? 0xFFD9534F : C_ACCENT, 26));
     }
