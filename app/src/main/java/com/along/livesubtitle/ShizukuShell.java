@@ -75,11 +75,52 @@ public final class ShizukuShell {
             // 按实际参数类型构造实参，避免 IllegalArgumentException
             Class<?>[] pt = m.getParameterTypes();
             Object[] args = new Object[pt.length];
+            // Shizuku v13 newProcess 内部会遍历 env 与 new File(dir)，传 null 会 NPE。
+            // 因此：第 1 个 String[] 位置传 cmd，第 2 个 String[] 位置传空数组（不能 null），
+            // String 位置传 "/"（不能 null）。alpha8 失败根因就是 env=null。
+            int strArrSeen = 0;
             for (int i = 0; i < pt.length; i++) {
-                if (pt[i] == String[].class) args[i] = (i == 0 ? cmd : null);
-                else args[i] = null;
+                if (pt[i] == String[].class) {
+                    if (strArrSeen == 0) args[i] = cmd;
+                    else args[i] = new String[0];
+                    strArrSeen++;
+                } else if (pt[i] == String.class) {
+                    args[i] = "/";
+                } else {
+                    args[i] = null;
+                }
             }
-            Object o = m.invoke(null, args);
+            Object o = null;
+            Throwable invokeErr = null;
+            try {
+                o = m.invoke(null, args);
+            } catch (Throwable t1) {
+                invokeErr = t1;
+            }
+            // 如果带 dir="/" 失败，再退一步试 null 参数（老版本 Shizuku 可能不接受 dir）
+            if (o == null && strArrSeen >= 2) {
+                Object[] args2 = new Object[pt.length];
+                int seen2 = 0;
+                for (int i = 0; i < pt.length; i++) {
+                    if (pt[i] == String[].class) {
+                        args2[i] = (seen2 == 0) ? cmd : new String[0];
+                        seen2++;
+                    } else {
+                        args2[i] = null;
+                    }
+                }
+                try {
+                    o = m.invoke(null, args2);
+                } catch (Throwable t2) {
+                    invokeErr = t2;
+                }
+            }
+            if (o == null) {
+                String em = (invokeErr == null) ? "null" : (invokeErr.getClass().getSimpleName() + ":" + invokeErr.getMessage());
+                Throwable cause = (invokeErr instanceof java.lang.reflect.InvocationTargetException) ? invokeErr.getCause() : null;
+                if (cause != null) em = em + " <- " + cause.getClass().getSimpleName() + ":" + cause.getMessage();
+                return new Result(-4, "InvokeFail:" + em);
+            }
             if (!(o instanceof Process)) return FAIL;
             p = (Process) o;
             final StringBuilder sb = new StringBuilder();

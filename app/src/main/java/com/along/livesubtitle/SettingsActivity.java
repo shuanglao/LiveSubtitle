@@ -924,13 +924,29 @@ public class SettingsActivity extends Activity {
                         if (inList) {
                             Toast.makeText(SettingsActivity.this, "已加入电池白名单", Toast.LENGTH_SHORT).show();
                         } else {
-                            String msg = "失败：命令未生效\n" + dbg;
-                            Toast.makeText(SettingsActivity.this, msg, Toast.LENGTH_LONG).show();
+                            showDiagDialog(dbg);
                         }
                         refreshShizukuState();
                     }
                 });
             }
         }).start();
+    }
+    /** 失败时弹可滚动对话框，完整展示诊断文本（Toast 具有最大高度限制会被截断）*/
+    private void showDiagDialog(final String dbg) {
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        android.widget.TextView tv = new android.widget.TextView(this);
+        tv.setText("失败：命令未生效\n\n" + dbg);
+        tv.setTextSize(11f);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setTextIsSelectable(true);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+        sv.addView(tv);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Shizuku 诊断")
+                .setView(sv)
+                .setPositiveButton("好", null)
+                .show();
     }
 }
