@@ -434,50 +434,41 @@ public class SettingsActivity extends Activity {
         // ---------------- 音频模式 ----------------
         LinearLayout card7 = card();
         root.addView(card7, cardLp());
-        cardTitle(card7, "声音来源", "内录对部分 App 可能不可用，会自动降级麦克风");
+        cardTitle(card7, "麦克风增强", "回声消除能压掉自己的外放声，只留对方说话");
 
-        final String[] modeNames = {"麦克风", "内录", "自动"};
-        final String[] modeFull = {"麦克风（听周围声音）",
-                "内录（抓 App 播放的声音）",
-                "自动（先内录，失败降级）"};
-
-        // 分段控件：浅墨绿轨道 + 滑动的墨绿实心胶囊
-        LinearLayout seg = new LinearLayout(this);
-        seg.setOrientation(LinearLayout.HORIZONTAL);
-        seg.setBackground(rounded(C_SEG_IDLE, 16));
-        seg.setPadding(dp(4), dp(4), dp(4), dp(4));
-        LinearLayout.LayoutParams segLp = new LinearLayout.LayoutParams(
+        // ---- 回声消除开关（VOICE_COMMUNICATION 源，系统级 AEC）----
+        Switch swAec = new Switch(this);
+        swAec.setChecked(prefs.isAecEnabled());
+        LinearLayout.LayoutParams swAecLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        segLp.topMargin = dp(12);
-        card7.addView(seg, segLp);
+        swAecLp.topMargin = dp(6);
+        card7.addView(swAec, swAecLp);
+        swAec.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                prefs.setAecEnabled(checked);
+                Toast.makeText(SettingsActivity.this,
+                        checked ? "已开启回声消除（重新开启字幕后生效）"
+                                : "已关闭回声消除，改用原始麦克风（重新开启字幕后生效）",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
 
-        int curMode = prefs.getAudioMode();
-        for (int i = 0; i < modeNames.length; i++) {
-            final int mode = i;
-            boolean sel = (curMode == i);
-            TextView b = new TextView(this);
-            b.setText(modeNames[i]);
-            b.setTextSize(13.5f);
-            b.setGravity(Gravity.CENTER);
-            b.setTypeface(null, sel ? android.graphics.Typeface.BOLD
-                    : android.graphics.Typeface.NORMAL);
-            b.setTextColor(sel ? Color.WHITE : C_SUB);
-            b.setBackground(rounded(sel ? C_ACCENT : Color.TRANSPARENT, 12));
-            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                    0, dp(36), 1f);
-            if (i > 0) blp.leftMargin = dp(4);
-            seg.addView(b, blp);
-            b.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    prefs.setAudioMode(mode);
+        // ---- 麦克风灵敏度滑块（50% ~ 400%）----
+        cardTitle(card7, "麦克风灵敏度", "太小听不清，太大会把噪音一起放大");
+        SeekBar sbGain = seek(card7, 50, 400, prefs.getMicGainPct());
+        sbGain.setOnSeekBarChangeListener(new SimpleSeek(50) {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                int v = real(p);
+                prefs.setMicGainPct(v);
+                if (fromUser) {
                     Toast.makeText(SettingsActivity.this,
-                            "已切换为：" + modeFull[mode] + "（重新开启字幕后生效）",
-                            Toast.LENGTH_LONG).show();
-                    rebuildLater();
+                            "灵敏度 " + v + "%（重新开启字幕后生效）",
+                            Toast.LENGTH_SHORT).show();
                 }
-            });
-        }
+            }
+        });
 
         // ---------------- 恢复默认位置 ----------------
         LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(

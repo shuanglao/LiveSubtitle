@@ -70,6 +70,7 @@ public class SherpaAsrEngine implements AsrEngine {
     private static final long GAP_WARN_MS = 500;
 
     private final Context context;
+    private final Prefs prefs;
     private AsrEngine.Callback callback;
 
     private OnlineRecognizer recognizer;
@@ -77,11 +78,18 @@ public class SherpaAsrEngine implements AsrEngine {
     private AudioRecord audioRecord;
     private Thread worker;
 
+    /** 麦克风增益（1.0 = 原始音量），由 Prefs.micGainPct 同步 */
+    private volatile float micGain = 1.0f;
+    /** 实际使用的音频源，用于日志与诊断 */
+    private volatile int usedAudioSource = -1;
+
     private volatile boolean running = false;
     private volatile boolean ready = false;
 
     public SherpaAsrEngine(Context context) {
         this.context = context.getApplicationContext();
+        this.prefs = new Prefs(this.context);
+        this.micGain = prefs.getMicGainPct() / 100f;
     }
 
     @Override
@@ -579,34 +587,97 @@ public class SherpaAsrEngine implements AsrEngine {
     }
 
     private boolean openAudio() {
+        // 每次开麦都重新读一遍设置，改完设置下次开麦即生效
+        micGain = prefs.getMicGainPct() / 100f;
+        boolean aec = prefs.isAecEnabled();
+        int primary = aec ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                          : MediaRecorder.AudioSource.MIC;
+        int backup = aec ? MediaRecorder.AudioSource.MIC
+                         : MediaRecorder.AudioSource.VOICE_COMMUNICATION;
+
+        // 首选源
+        if (tryOpenAudio(primary)) {
+            usedAudioSource = primary;
+            logf("[audio] opened source=" + srcName(primary)
+                    + " aec=" + aec + " gain=" + micGain
+                    + "(" + prefs.getMicGainPct() + "%)");
+            return true;
+        }
+        logf("[audio] primary source FAILED: " + srcName(primary));
+
+        // 兜底换源（部分机型 VOICE_COMMUNICATION 初始化失败）
+        if (tryOpenAudio(backup)) {
+            usedAudioSource = backup;
+            logf("[audio] fallback opened source=" + srcName(backup)
+                    + " gain=" + micGain);
+            return true;
+        }
+        logf("[audio] backup source FAILED: " + srcName(backup));
+
+        // 最后兜底：MIC（最原始的源，几乎必然可用）
+        if (primary != MediaRecorder.AudioSource.MIC && backup != MediaRecorder.AudioSource.MIC
+                && tryOpenAudio(MediaRecorder.AudioSource.MIC)) {
+            usedAudioSource = MediaRecorder.AudioSource.MIC;
+            logf("[audio] last-resort opened source=MIC gain=" + micGain);
+            return true;
+        }
+
+        logf("[audio] ALL SOURCES FAILED, audio unavailable");
+        releaseAudio();
+        return false;
+    }
+
+    /** 尝试用指定音频源打开 AudioRecord，成功返回 true */
+    private boolean tryOpenAudio(int source) {
         try {
+            releaseAudio();
             int minBuf = AudioRecord.getMinBufferSize(
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuf <= 0) {
+                logf("[audio] getMinBufferSize failed for " + srcName(source) + " ret=" + minBuf);
+                return false;
+            }
             // v1.14: 原为 max(minBuf*2, SAMPLE_RATE*2) 仅约 1 秒缓冲，
             // decode 一旦慢于 100ms 环形缓冲就会溢出丢帧 → 识别跳字。
             // 扩到 4 秒，给 decode 足够的容错空间。
             int bufSize = Math.max(minBuf * 2, SAMPLE_RATE * 2 * AUDIO_BUF_SECONDS);
             elog("[audio] getMinBufferSize=" + minBuf + " bufSize=" + bufSize
-                    + " (" + AUDIO_BUF_SECONDS + "s)");
-            audioRecord = new AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
+                    + " (" + AUDIO_BUF_SECONDS + "s) src=" + srcName(source));
+            AudioRecord ar = new AudioRecord(
+                    source,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
                     bufSize);
-            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-                releaseAudio();
+            if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
+                logf("[audio] AudioRecord not initialized for " + srcName(source)
+                        + " state=" + ar.getState());
+                try { ar.release(); } catch (Throwable ignore) {}
                 return false;
             }
-            audioRecord.startRecording();
+            ar.startRecording();
+            if (ar.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                logf("[audio] startRecording did not enter RECORDING for " + srcName(source)
+                        + " recState=" + ar.getRecordingState());
+                try { ar.release(); } catch (Throwable ignore) {}
+                return false;
+            }
+            audioRecord = ar;
             return true;
         } catch (Throwable e) {
-            Log.e(TAG, "openAudio error", e);
-            releaseAudio();
+            Log.e(TAG, "tryOpenAudio error " + srcName(source), e);
+            logf("[audio] tryOpenAudio exception " + srcName(source) + " : "
+                    + e.getClass().getSimpleName() + " " + e.getMessage());
             return false;
         }
+    }
+
+    private static String srcName(int source) {
+        if (source == MediaRecorder.AudioSource.MIC) return "MIC";
+        if (source == MediaRecorder.AudioSource.VOICE_COMMUNICATION) return "VOICE_COMMUNICATION";
+        return "SRC_" + source;
     }
 
     private void loop() {
@@ -685,6 +756,18 @@ public class SherpaAsrEngine implements AsrEngine {
             if (readCost > READ_SLOW_MS) {
                 elog("[loop] SLOW READ cost=" + readCost + "ms n=" + n
                         + " iter=" + iter + " total=" + totalRead);
+            }
+
+            // ---- 麦克风增益：放大原始 PCM，同时饱和钳制防削波 ----
+            // 放在 calcLevel 之前，让音量条与静音检测都基于增益后的真实电平
+            float g = micGain;
+            if (g != 1.0f) {
+                for (int i = 0; i < n; i++) {
+                    int v = (int) (buffer[i] * g);
+                    if (v > 32767) v = 32767;
+                    else if (v < -32768) v = -32768;
+                    buffer[i] = (short) v;
+                }
             }
 
             float lvl = calcLevel(buffer, n);

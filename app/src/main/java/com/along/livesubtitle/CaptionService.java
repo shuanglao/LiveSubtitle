@@ -390,22 +390,11 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     private void startEngine() {
         stopEngine();
 
-        int mode = prefs.getAudioMode();
+        // 1.14 起：内录（MediaProjection/PlaybackCapture）确认被系统策略静音，
+        // 全部走麦克风。AEC 与灵敏度在 SherpaAsrEngine.openAudio() 内按 Prefs 应用。
+        logf("[engine] start with mic aec=" + prefs.isAecEnabled()
+                + " gain=" + prefs.getMicGainPct() + "%");
 
-        if (mode == 1 || mode == 2) {
-            // 内录模式（含自动降级）
-            if (isProjectionReady()) {
-                // 注意：PlaybackCaptureEngine 属第二阶段（需要 sherpa-onnx 喂 PCM）
-                // 现阶段若用户选内录但引擎未就绪，直接降级并提示
-                if (mode == 1) {
-                    toast("内录引擎尚未就绪，已切换为麦克风");
-                }
-            } else if (mode == 1) {
-                toast("未授权录屏，已切换为麦克风");
-            }
-        }
-
-        // 麦克风模式（第一阶段默认路径）
         engine = new SherpaAsrEngine(this);
         engine.start(new AsrEngine.Callback() {
             @Override
@@ -549,12 +538,6 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
             window.hide();
             window = null;
         }
-    }
-
-    /** 录屏授权是否已就绪（第二阶段内录使用） */
-    private boolean isProjectionReady() {
-        // 第一阶段：始终返回 false，等 PlaybackCaptureEngine 落地后再改
-        return false;
     }
 
     // ============================================================

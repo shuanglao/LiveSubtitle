@@ -72,13 +72,51 @@ public class Prefs {
     }
 
     // ---------- 音频模式 ----------
-    /** 0 = 麦克风，1 = 内录（MediaProjection），2 = 自动（内录失败降级麦克风） */
+    /**
+     * 兼容旧字段（1.14 起不再使用）。
+     * 历史原因：设置页曾有「麦克风 / 内录 / 自动」三段选择，但内录引擎从未实现，
+     * 三个选项实际全部走麦克风，属误导性假开关，已下线。
+     * 保留读取方法仅为兼容老配置文件，避免残留 Toast 逻辑编译不过。
+     */
     public int getAudioMode() {
-        return sp.getInt("audio_mode", 2);
+        return sp.getInt("audio_mode", 0);
     }
 
     public void setAudioMode(int v) {
-        sp.edit().putInt("audio_mode", v).apply();
+        sp.edit().putInt("audio_mode", v).commit();
+    }
+
+    // ---------- 回声消除（AEC） ----------
+    /**
+     * 是否启用回声消除。
+     * 原理：走 AudioSource.VOICE_COMMUNICATION 而非 MIC，该源由系统音频策略
+     * 挂上 AEC（声学回声消除），能把自己外放出来的声音从采集流里压掉，
+     * 只留下对方（以及环境）的声音，避免"自问自答"式字幕。
+     * 默认 true：这是通话字幕的正解路径。
+     */
+    public boolean isAecEnabled() {
+        return sp.getBoolean("aec_enabled", true);
+    }
+
+    public void setAecEnabled(boolean v) {
+        sp.edit().putBoolean("aec_enabled", v).commit();
+    }
+
+    // ---------- 麦克风灵敏度（软件增益） ----------
+    /**
+     * 软件增益倍数 * 100（默认 100 = 1.0 倍不放大）。
+     * 范围 50~400，即 0.5x ~ 4.0x。
+     * 用于对方声音偏小（免提音量不够、距离远）时提高识别率。
+     * 注意：放大过猛会削顶失真反而更差，故上限锁 4.0x。
+     */
+    public int getMicGainPct() {
+        return sp.getInt("mic_gain_pct", 100);
+    }
+
+    public void setMicGainPct(int v) {
+        if (v < 50) v = 50;
+        if (v > 400) v = 400;
+        sp.edit().putInt("mic_gain_pct", v).commit();
     }
 
     // ---------- 字幕窗外观 ----------
