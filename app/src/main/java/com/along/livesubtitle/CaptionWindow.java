@@ -188,35 +188,92 @@ public class CaptionWindow {
         this.ctx = ctx;
         this.prefs = prefs;
         this.wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
-        DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-        screenW = dm.widthPixels;
-        screenH = dm.heightPixels;
-        // 兜底：Service 里 getDisplayMetrics 可能是 0，改用真实屏幕尺寸
-        // 全程反射，不依赖编译期 API（规避老 android.jar 未知方法问题）
-        if (screenW <= 0 || screenH <= 0) {
+        refreshScreenSize();
+        wlog("ctor screen=" + screenW + "x" + screenH
+                + " density=" + ctx.getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * v1.15：刷新屏幕尺寸（屏幕可能在创建后被旋转，必须能重算）。
+     * 三重兜底，全程反射，不依赖编译期 API（规避老 android.jar 未知方法问题）。
+     * 返回值：true 表示尺寸相比上次发生了变化。
+     */
+    private boolean refreshScreenSize() {
+        int oldW = screenW, oldH = screenH;
+        int w = 0, h = 0;
+        try {
+            DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            w = dm.widthPixels;
+            h = dm.heightPixels;
+        } catch (Throwable ignore) {
+        }
+        // 兜底 1：getRealMetrics
+        if (w <= 0 || h <= 0) {
             try {
                 Object disp = wm.getClass().getMethod("getDefaultDisplay").invoke(wm);
                 DisplayMetrics rm = new DisplayMetrics();
                 disp.getClass().getMethod("getRealMetrics", DisplayMetrics.class).invoke(disp, rm);
-                if (rm.widthPixels > 0) screenW = rm.widthPixels;
-                if (rm.heightPixels > 0) screenH = rm.heightPixels;
+                if (rm.widthPixels > 0) w = rm.widthPixels;
+                if (rm.heightPixels > 0) h = rm.heightPixels;
             } catch (Throwable ignore) {
             }
         }
-        if (screenW <= 0 || screenH <= 0) {
+        // 兜底 2：getMaximumWindowMetrics
+        if (w <= 0 || h <= 0) {
             try {
                 Object wmx = wm.getClass().getMethod("getMaximumWindowMetrics").invoke(wm);
                 Object bounds = wmx.getClass().getMethod("getBounds").invoke(wmx);
                 int bw = ((android.graphics.Rect) bounds).width();
                 int bh = ((android.graphics.Rect) bounds).height();
-                if (bw > 0) screenW = bw;
-                if (bh > 0) screenH = bh;
+                if (bw > 0) w = bw;
+                if (bh > 0) h = bh;
             } catch (Throwable ignore) {
             }
         }
-        if (screenW <= 0) screenW = 1080;
-        if (screenH <= 0) screenH = 1920;
-        wlog("ctor screen=" + screenW + "x" + screenH + " density=" + dm.density);
+        if (w <= 0) w = oldW > 0 ? oldW : 1080;
+        if (h <= 0) h = oldH > 0 ? oldH : 1920;
+        screenW = w;
+        screenH = h;
+        return oldW != screenW || oldH != screenH;
+    }
+
+    /**
+     * v1.15：屏幕旋转后重算尺寸并重新夹住窗口位置（像素宽度保持不变）。
+     * 这是横屏只能拖一半的根因修复：screenW/H 原先只在构造时取一次。
+     */
+    public void onScreenRotated() {
+        boolean changed = refreshScreenSize();
+        if (!changed) {
+            wlog("[rot] onScreenRotated: size unchanged " + screenW + "x" + screenH);
+            return;
+        }
+        wlog("[rot] onScreenRotated begin screen=" + screenW + "x" + screenH
+                + " added=" + added);
+        if (lp == null || !added) {
+            wlog("[rot] onScreenRotated: window not attached, size refreshed only");
+            return;
+        }
+        int oldW = lp.width, oldH = lp.height;
+        int oldX = lp.x, oldY = lp.y;
+        // 像素宽度不变策略：尺寸超屏才收缩，绝不主动放大
+        if (lp.width > screenW) lp.width = screenW;
+        if (lp.height > screenH) lp.height = screenH;
+        if (lp.width <= 0) lp.width = Math.min(screenW, dp(300));
+        if (lp.height <= 0) lp.height = dp(160);
+        // 重新夹位置（这里用新 screenW/screenH，横屏右半边就能拖到了）
+        int maxX = Math.max(0, screenW - lp.width);
+        int maxY = Math.max(0, screenH - lp.height);
+        lp.x = Math.max(0, Math.min(lp.x, maxX));
+        lp.y = Math.max(0, Math.min(lp.y, maxY));
+        try {
+            wm.updateViewLayout(root, lp);
+            wlog("[rot] onScreenRotated applied size " + oldW + "x" + oldH + " -> "
+                    + lp.width + "x" + lp.height + " pos " + oldX + "," + oldY + " -> "
+                    + lp.x + "," + lp.y + " screen=" + screenW + "x" + screenH);
+        } catch (Throwable t) {
+            wlog("[rot] onScreenRotated updateViewLayout FAILED: " + android.util.Log.getStackTraceString(t));
+        }
+        saveGeometry();
     }
 
     public void setListener(Listener l) {
@@ -544,6 +601,13 @@ public class CaptionWindow {
     /** 把位置限制在屏幕内 */
     private void clampPos(int nx, int ny) {
         if (lp.width <= 0 || lp.height <= 0) return;
+        // v1.15：拖动前刷新屏幕尺寸兜底。某些 ROM 旋转后不回调 onConfigurationChanged，
+        //        这里每次拖动都重算一次，保证边界永远是最新屏幕宽高（横屏能拖到右半边）。
+        if (refreshScreenSize()) {
+            wlog("[rot] clampPos auto-refresh screen=" + screenW + "x" + screenH);
+            if (lp.width > screenW) lp.width = screenW;
+            if (lp.height > screenH) lp.height = screenH;
+        }
         int maxX = Math.max(0, screenW - lp.width);
         int maxY = Math.max(0, screenH - lp.height);
         lp.x = Math.max(0, Math.min(nx, maxX));
