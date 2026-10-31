@@ -26,6 +26,14 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LiveSubtitle"
         tools:targetApi="34">
+        <!-- Shizuku 授权桥：api 13.1.5 需配同版本 provider 才能握手 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <activity
             android:name=".MainActivity"
