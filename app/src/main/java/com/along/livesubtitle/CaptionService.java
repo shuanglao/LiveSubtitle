@@ -276,11 +276,32 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         logf("onDestroy (userStarted=" + userStarted + ", prefsEnabled=" + prefs.isEnabled() + ", running=" + running + ", stickyCount=" + prefs.getStickyCount() + ", pid=" + android.os.Process.myPid() + ", aliveMs=" + (System.currentTimeMillis() - aliveAt) + ")");
         super.onDestroy();
     }
-
     @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
+
+    /**
+     * v1.15：屏幕旋转（横竖屏切换）时重算悬浮窗尺寸并重新夹位置。
+     * 根因修复：CaptionWindow 的 screenW/screenH 原先只在构造时取一次，
+     * 竖屏创建后转到横屏，窗口宽度与拖动边界仍按竖屏算，导致右半边拖不到。
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration cfg) {
+        super.onConfigurationChanged(cfg);
+        try {
+            logf("[rot] onConfigurationChanged orientation=" + cfg.orientation
+                    + " screen=" + cfg.screenWidthDp + "x" + cfg.screenHeightDp);
+            if (window != null) {
+                window.onScreenRotated();
+            } else {
+                logf("[rot] onConfigurationChanged: window is null, skip");
+            }
+        } catch (Throwable t) {
+            logf("[rot] onConfigurationChanged FAILED: " + Log.getStackTraceString(t));
+        }
+    }
+
 
     // ============================================================
     //  启动 / 停止字幕
