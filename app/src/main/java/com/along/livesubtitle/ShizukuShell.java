@@ -53,16 +53,23 @@ public final class ShizukuShell {
      */
     public static Result exec(String[] cmd, long timeoutMs) {
         Process p = null;
+
+        // ==== 步骤 1：加载 Shizuku 类 ====
+        Class<?> c = null;
         try {
-            Class<?> c = Class.forName("rikka.shizuku.Shizuku");
-            Method m = null;
-            // 1) 优先精确签名
+            c = Class.forName("rikka.shizuku.Shizuku");
+        } catch (Throwable t) {
+            return new Result(-3, "ClassNotFound:" + diag(t));
+        }
+
+        // ==== 步骤 2：查找 newProcess 方法 ====
+        Method m = null;
+        try {
             try {
                 m = c.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
             } catch (Throwable e1) {
                 m = null;
             }
-            // 2) 兜底：按方法名模糊匹配，自适应参数个数
             if (m == null) {
                 for (Method cand : c.getDeclaredMethods()) {
                     if (!"newProcess".equals(cand.getName())) continue;
@@ -70,59 +77,90 @@ public final class ShizukuShell {
                     if (m == null) m = cand;
                 }
             }
-            if (m == null) return new Result(-3, "NoSuchMethod:newProcess");
+        } catch (Throwable t) {
+            return new Result(-5, "GetMethodFail:" + diag(t));
+        }
+        if (m == null) {
+            StringBuilder sig = new StringBuilder();
+            try {
+                for (Method cand : c.getDeclaredMethods()) {
+                    if (!"newProcess".equals(cand.getName())) continue;
+                    sig.append(cand.getName()).append('(');
+                    Class<?>[] cp = cand.getParameterTypes();
+                    for (int k = 0; k < cp.length; k++) {
+                        if (k > 0) sig.append(',');
+                        sig.append(cp[k].getName());
+                    }
+                    sig.append(") ");
+                }
+            } catch (Throwable ignored) {
+            }
+            return new Result(-5, "NoSuchMethod:newProcess [cands=" + (sig.length() == 0 ? "none" : sig.toString().trim()) + "]");
+        }
+
+        // ==== 步骤 3：解除访问限制（hidden API 重点雷区） ====
+        try {
             m.setAccessible(true);
-            // 按实际参数类型构造实参，避免 IllegalArgumentException
-            Class<?>[] pt = m.getParameterTypes();
-            Object[] args = new Object[pt.length];
-            // Shizuku v13 newProcess 内部会遍历 env 与 new File(dir)，传 null 会 NPE。
-            // 因此：第 1 个 String[] 位置传 cmd，第 2 个 String[] 位置传空数组（不能 null），
-            // String 位置传 "/"（不能 null）。alpha8 失败根因就是 env=null。
-            int strArrSeen = 0;
+        } catch (Throwable t) {
+            return new Result(-6, "SetAccessibleDenied:" + diag(t));
+        }
+
+        // ==== 步骤 4：按实际参数类型构造实参 ====
+        Class<?>[] pt;
+        try {
+            pt = m.getParameterTypes();
+        } catch (Throwable t) {
+            return new Result(-7, "GetParamTypesFail:" + diag(t));
+        }
+        Object[] args = new Object[pt.length];
+        int strArrSeen = 0;
+        for (int i = 0; i < pt.length; i++) {
+            if (pt[i] == String[].class) {
+                if (strArrSeen == 0) args[i] = cmd;
+                else args[i] = new String[0];
+                strArrSeen++;
+            } else if (pt[i] == String.class) {
+                args[i] = "/";
+            } else {
+                args[i] = null;
+            }
+        }
+
+        // ==== 步骤 5：反射调用 ====
+        Object o = null;
+        Throwable invokeErr = null;
+        try {
+            o = m.invoke(null, args);
+        } catch (Throwable t1) {
+            invokeErr = t1;
+        }
+        if (o == null && strArrSeen >= 2) {
+            Object[] args2 = new Object[pt.length];
+            int seen2 = 0;
             for (int i = 0; i < pt.length; i++) {
                 if (pt[i] == String[].class) {
-                    if (strArrSeen == 0) args[i] = cmd;
-                    else args[i] = new String[0];
-                    strArrSeen++;
-                } else if (pt[i] == String.class) {
-                    args[i] = "/";
+                    args2[i] = (seen2 == 0) ? cmd : new String[0];
+                    seen2++;
                 } else {
-                    args[i] = null;
+                    args2[i] = null;
                 }
             }
-            Object o = null;
-            Throwable invokeErr = null;
             try {
-                o = m.invoke(null, args);
-            } catch (Throwable t1) {
-                invokeErr = t1;
+                o = m.invoke(null, args2);
+            } catch (Throwable t2) {
+                invokeErr = t2;
             }
-            // 如果带 dir="/" 失败，再退一步试 null 参数（老版本 Shizuku 可能不接受 dir）
-            if (o == null && strArrSeen >= 2) {
-                Object[] args2 = new Object[pt.length];
-                int seen2 = 0;
-                for (int i = 0; i < pt.length; i++) {
-                    if (pt[i] == String[].class) {
-                        args2[i] = (seen2 == 0) ? cmd : new String[0];
-                        seen2++;
-                    } else {
-                        args2[i] = null;
-                    }
-                }
-                try {
-                    o = m.invoke(null, args2);
-                } catch (Throwable t2) {
-                    invokeErr = t2;
-                }
-            }
-            if (o == null) {
-                String em = (invokeErr == null) ? "null" : (invokeErr.getClass().getSimpleName() + ":" + invokeErr.getMessage());
-                Throwable cause = (invokeErr instanceof java.lang.reflect.InvocationTargetException) ? invokeErr.getCause() : null;
-                if (cause != null) em = em + " <- " + cause.getClass().getSimpleName() + ":" + cause.getMessage();
-                return new Result(-4, "InvokeFail:" + em);
-            }
-            if (!(o instanceof Process)) return FAIL;
-            p = (Process) o;
+        }
+        if (o == null) {
+            return new Result(-4, "InvokeFail:" + diag(invokeErr));
+        }
+        if (!(o instanceof Process)) {
+            return new Result(-8, "NotProcess:" + (o == null ? "null" : o.getClass().getName()));
+        }
+        p = (Process) o;
+
+        // ==== 步骤 6：读取输出 ====
+        try {
             final StringBuilder sb = new StringBuilder();
             final Process fp = p;
             Thread reader = new Thread(new Runnable() {
@@ -134,7 +172,6 @@ public final class ShizukuShell {
                         while ((line = br.readLine()) != null) {
                             sb.append(line).append(10);
                         }
-                        // stderr 也并入，部分 ROM 把 cmd 输出写到 stderr
                         try {
                             InputStream es = fp.getErrorStream();
                             if (es != null) {
@@ -164,19 +201,28 @@ public final class ShizukuShell {
                     try { Thread.sleep(50); } catch (InterruptedException ie) { break; }
                 }
             }
-            // 超时：销毁进程，返回已读到的部分
             if (!done) {
                 try { p.destroy(); } catch (Throwable ignored) {}
-                return new Result(-2, sb.toString());
+                return new Result(-2, "Timeout:" + sb.toString());
             }
-            return new Result(-1, sb.toString());
+            return new Result(-1, "UnknownExit:" + sb.toString());
         } catch (Throwable t) {
             if (p != null) {
                 try { p.destroy(); } catch (Throwable ignored) {}
             }
-            // 纯静态工具类拿不到 Context，Lg 需要 Context，这里不记日志；失败已通过返回值表达
-            return FAIL;
+            return new Result(-9, "ReadFail:" + diag(t));
         }
+    }
+
+    /** 把异常展开成「类名:message <- cause类名:cause message」，绝不返回裸信息 */
+    private static String diag(Throwable t) {
+        if (t == null) return "null";
+        String s = t.getClass().getName() + ":" + t.getMessage();
+        Throwable c = (t instanceof java.lang.reflect.InvocationTargetException) ? t.getCause() : t.getCause();
+        if (c != null && c != t) {
+            s = s + " <- " + c.getClass().getName() + ":" + c.getMessage();
+        }
+        return s;
     }
 
     /** 执行单条命令（默认 8 秒超时） */
