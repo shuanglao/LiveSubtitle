@@ -476,16 +476,23 @@ public class SettingsActivity extends Activity {
         btnCapturePerm.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (!ShizukuShell.available()) {
+                // 1. 首选：MediaProjection 系统授权（Android 10+ 内录唯一合法通路）
+                try {
+                    android.media.projection.MediaProjectionManager mpm =
+                            (android.media.projection.MediaProjectionManager)
+                                    getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE);
+                    if (mpm == null) {
+                        Toast.makeText(SettingsActivity.this,
+                                "系统不支持投屏服务，无法内录", Toast.LENGTH_LONG).show();
+                    } else {
+                        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION);
+                        Toast.makeText(SettingsActivity.this,
+                                "请在弹窗中同意「开始录制或投放」以启用内录", Toast.LENGTH_LONG).show();
+                    }
+                } catch (Throwable t) {
                     Toast.makeText(SettingsActivity.this,
-                            "Shizuku 未连接，无法授权", Toast.LENGTH_SHORT).show();
-                    return;
+                            "拉起投屏授权失败：" + t, Toast.LENGTH_LONG).show();
                 }
-                boolean ok = ShizukuShell.grantCaptureAudioOutput(getPackageName());
-                Toast.makeText(SettingsActivity.this,
-                        ok ? "已授予 CAPTURE_AUDIO_OUTPUT"
-                           : "授权失败，请确认 Shizuku 已授予本应用权限",
-                        Toast.LENGTH_LONG).show();
             }
         });
         TextView tvModeTip = new TextView(this);
@@ -1035,5 +1042,24 @@ public class SettingsActivity extends Activity {
                 .setView(sv)
                 .setPositiveButton("好", null)
                 .show();
+    }
+
+    // ===== 4. MediaProjection 授权回调（Android 10+ 内录） =====
+    private static final int REQ_PROJECTION = 1002;
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PROJECTION) return;
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            try {
+                MediaProjectionHolder.put(resultCode, data);
+                Toast.makeText(this, "内录授权成功，重新开启字幕后生效", Toast.LENGTH_LONG).show();
+            } catch (Throwable t) {
+                Toast.makeText(this, "保存投屏令牌失败：" + t, Toast.LENGTH_LONG).show();
+            }
+        } else {
+            Toast.makeText(this, "已取消内录授权（仅麦克风字幕可用）", Toast.LENGTH_LONG).show();
+        }
     }
 }

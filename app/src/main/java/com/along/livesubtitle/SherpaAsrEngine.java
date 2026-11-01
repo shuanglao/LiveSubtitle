@@ -743,9 +743,15 @@ public class SherpaAsrEngine implements AsrEngine {
                     .setSampleRate(SAMPLE_RATE)
                     .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                     .build();
+            android.media.projection.MediaProjection projection =
+                    MediaProjectionHolder.getProjection();
+            if (projection == null) {
+                elog("[cap] no MediaProjection token, authorize in Settings first");
+                return false;
+            }
+            elog("[cap] using MediaProjection " + (projection == null ? 0 : 1));
             AudioPlaybackCaptureConfiguration cfg =
-                    new AudioPlaybackCaptureConfiguration.Builder(
-                            (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE))
+                    new AudioPlaybackCaptureConfiguration.Builder(projection)
                             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                             .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)

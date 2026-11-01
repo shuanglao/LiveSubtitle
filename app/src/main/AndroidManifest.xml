@@ -51,14 +51,14 @@
             android:name=".SettingsActivity"
             android:exported="false" />
 
-        <!-- 只声明 microphone 类型：本版只用 AudioRecord 采集麦克风。
-             Android 14 若声明 mediaProjection 却无录屏授权 token，
-             startForeground() 会抛 SecurityException 导致服务被杀。
-             等第二阶段做内录时，再改成 microphone|mediaProjection 并补投影授权流程。 -->
+        <!-- 双通道：microphone（麦克风收音）+ mediaProjection（App 内录）。
+             注意：只有在已持有 MediaProjection 授权令牌时才可在
+             startForeground 带 mediaProjection 类型，否则系统会 DENIED。
+             代码侧见 CaptionService.startForegroundSafe() 的动态 fgsType。 -->
         <service
             android:name=".CaptionService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaProjection" />
 
         <!-- 快捷设置磁贴：下拉通知栏一点即开字幕 -->
         <service

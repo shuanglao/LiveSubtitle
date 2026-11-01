@@ -395,6 +395,22 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         logf("[engine] start with mic aec=" + prefs.isAecEnabled()
                 + " gain=" + prefs.getMicGainPct() + "%");
 
+        // v1.16：内录权限（MediaProjection）。若设置页已授权，Holder 持有令牌，
+        // 这里直接兑换成 MediaProjection 实体；未授权则只记日志，不阻断麦克风字幕。
+        try {
+            if (!MediaProjectionHolder.hasProjection() && MediaProjectionHolder.hasToken()) {
+                android.media.projection.MediaProjectionManager mpm =
+                        (android.media.projection.MediaProjectionManager)
+                        getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                android.media.projection.MediaProjection mp = MediaProjectionHolder.createProjection(mpm);
+                logf("[prj] createProjection result=" + (mp != null));
+            } else {
+                logf("[prj] hasProjection=" + MediaProjectionHolder.hasProjection()
+                        + " hasToken=" + MediaProjectionHolder.hasToken());
+            }
+        } catch (Throwable t) {
+            logf("[prj] createProjection EXCEPTION " + Log.getStackTraceString(t));
+        }
         engine = new SherpaAsrEngine(this);
         engine.start(new AsrEngine.Callback() {
             @Override
@@ -588,23 +604,42 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     }
 
     private void startForegroundSafe() {
+        // v1.16：已有 MediaProjection 令牌时，前台类型必须同时带 mediaProjection，
+        // 否则 AudioRecord 内录轨会被系统静音（Android 10+ 强制要求）。
+        // 注意：MEDIA_PROJECTION 常量 API 29+ 才有，低版本用数值 0x20 兜底。
+        final int TYPE_MICROPHONE = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        final int TYPE_MEDIA_PROJECTION = 0x20; // FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        boolean hasPrj = MediaProjectionHolder.hasProjection();
+        int fgsType = TYPE_MICROPHONE | (hasPrj ? TYPE_MEDIA_PROJECTION : 0);
+        logf("[fgs] type=0x" + Integer.toHexString(fgsType) + " hasProjection=" + hasPrj);
         try {
             Notification n = buildNotification(false);
             if (Build.VERSION.SDK_INT >= 29) {
-                // Android 10+：显式声明 microphone 类型，避免系统因类型不匹配拒授 FGS 身份
-                startForeground(NOTI_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                startForeground(NOTI_ID, n, fgsType);
             } else {
                 startForeground(NOTI_ID, n);
             }
-            logf("startForeground OK type=microphone (explicit)");
+            logf("startForeground OK type=0x" + Integer.toHexString(fgsType));
         } catch (Throwable t) {
             logf("startForeground FAILED: " + Log.getStackTraceString(t));
+            // 降级1：去掉 mediaProjection 类型（只留 microphone）
             try {
                 Notification n = buildNotification(false);
-                startForeground(NOTI_ID, n);
-                logf("startForeground retry OK (2-arg)");
+                if (Build.VERSION.SDK_INT >= 29) {
+                    startForeground(NOTI_ID, n, TYPE_MICROPHONE);
+                } else {
+                    startForeground(NOTI_ID, n);
+                }
+                logf("startForeground retry OK (mic only)");
             } catch (Throwable t2) {
                 logf("startForeground retry FAILED: " + Log.getStackTraceString(t2));
+                try {
+                    Notification n = buildNotification(false);
+                    startForeground(NOTI_ID, n);
+                    logf("startForeground retry2 OK (2-arg)");
+                } catch (Throwable t3) {
+                    logf("startForeground retry2 FAILED: " + Log.getStackTraceString(t3));
+                }
             }
         }
     }
