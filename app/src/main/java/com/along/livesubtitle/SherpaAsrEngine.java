@@ -2,7 +2,9 @@ package com.along.livesubtitle;
 
 import android.content.Context;
 import android.content.res.AssetManager;
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioPlaybackCaptureConfiguration;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.util.Log;
@@ -68,6 +70,10 @@ public class SherpaAsrEngine implements AsrEngine {
     private static final long DECODE_SLOW_MS = 500;
     /** v1.14: 两次回调间隔超过该毫秒数则记日志（断流告警） */
     private static final long GAP_WARN_MS = 500;
+    /** v1.16: 内录轨音量低于该值时认为「对方没在说话/外放静音」 */
+    private static final float CAPTURE_MIN_LEVEL = 0.004f;
+    /** v1.16: 内录轨连续读失败多少次后放弃内录轨 */
+    private static final int CAPTURE_FAIL_LIMIT = 30;
 
     private final Context context;
     private final Prefs prefs;
@@ -76,6 +82,16 @@ public class SherpaAsrEngine implements AsrEngine {
     private OnlineRecognizer recognizer;
     private OnlineStream stream;
     private AudioRecord audioRecord;
+    /** v1.16: 内录轨（AudioPlaybackCapture）—— 抓会议/视频外放音，可为 null */
+    private AudioRecord captureRecord;
+    /** v1.16: 内录轨是否处于录音态 */
+    private volatile boolean captureRunning = false;
+    /** v1.16: 混音缓冲（内录轨一次读到的 PCM），长度 = chunk */
+    private short[] mixBuf;
+    /** v1.16: 内录轨连续读失败次数 */
+    private int capFail = 0;
+    /** v1.16: 当前生效的采集模式（0=MIC 1=内录 2=自动混合） */
+    private volatile int audioMode = 2;
     private Thread worker;
 
     /** 麦克风增益（1.0 = 原始音量），由 Prefs.micGainPct 同步 */
@@ -589,6 +605,7 @@ public class SherpaAsrEngine implements AsrEngine {
     private boolean openAudio() {
         // 每次开麦都重新读一遍设置，改完设置下次开麦即生效
         micGain = prefs.getMicGainPct() / 100f;
+        audioMode = prefs.getAudioMode();
         boolean aec = prefs.isAecEnabled();
         int primary = aec ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
                           : MediaRecorder.AudioSource.MIC;
@@ -600,7 +617,9 @@ public class SherpaAsrEngine implements AsrEngine {
             usedAudioSource = primary;
             logf("[audio] opened source=" + srcName(primary)
                     + " aec=" + aec + " gain=" + micGain
-                    + "(" + prefs.getMicGainPct() + "%)");
+                    + "(" + prefs.getMicGainPct() + "%) mode=" + modeName(audioMode));
+            // v1.16: 麦克风轨开成功后，按需再开一路内录轨（两路并行，混音不切换）
+            maybeOpenCapture();
             return true;
         }
         logf("[audio] primary source FAILED: " + srcName(primary));
@@ -610,6 +629,7 @@ public class SherpaAsrEngine implements AsrEngine {
             usedAudioSource = backup;
             logf("[audio] fallback opened source=" + srcName(backup)
                     + " gain=" + micGain);
+            maybeOpenCapture();
             return true;
         }
         logf("[audio] backup source FAILED: " + srcName(backup));
@@ -619,6 +639,7 @@ public class SherpaAsrEngine implements AsrEngine {
                 && tryOpenAudio(MediaRecorder.AudioSource.MIC)) {
             usedAudioSource = MediaRecorder.AudioSource.MIC;
             logf("[audio] last-resort opened source=MIC gain=" + micGain);
+            maybeOpenCapture();
             return true;
         }
 
@@ -678,6 +699,143 @@ public class SherpaAsrEngine implements AsrEngine {
         if (source == MediaRecorder.AudioSource.MIC) return "MIC";
         if (source == MediaRecorder.AudioSource.VOICE_COMMUNICATION) return "VOICE_COMMUNICATION";
         return "SRC_" + source;
+    }
+    private static String modeName(int m) {
+        if (m == 0) return "MIC_ONLY";
+        if (m == 1) return "CAPTURE_ONLY";
+        return "AUTO_MIX";
+    }
+    /**
+     * v1.16: 按采集模式决定是否再开一路内录轨。
+     * 0 = 纯麦克风（不内录）；1 = 纯内录（也不内录额外轨，由主轨承担）；
+     * 2 = 自动混合（麦克风 + 内录并行，这是通话/会议字幕的推荐档）。
+     */
+    private void maybeOpenCapture() {
+        if (audioMode != 2) {
+            elog("[cap] skip, mode=" + modeName(audioMode));
+            return;
+        }
+        if (captureRecord != null) return;
+        if (doOpenCapture()) {
+            captureRunning = true;
+            capFail = 0;
+            elog("[cap] opened AudioPlaybackCapture OK, mixing with mic");
+            emitStatus("双通道采集已开启");
+        } else {
+            captureRunning = false;
+            elog("[cap] AudioPlaybackCapture unavailable, mic only");
+        }
+    }
+    /** 真正构造内录轨；失败返回 false，绝不抛异常 */
+    private boolean doOpenCapture() {
+        try {
+            int minBuf = AudioRecord.getMinBufferSize(
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuf <= 0) {
+                elog("[cap] getMinBufferSize ret=" + minBuf);
+                return false;
+            }
+            int bufSize = Math.max(minBuf * 2, SAMPLE_RATE * 2 * 2);
+            AudioFormat fmt = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build();
+            AudioPlaybackCaptureConfiguration cfg =
+                    new AudioPlaybackCaptureConfiguration.Builder(
+                            (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE))
+                            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                            .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                            .build();
+            AudioRecord ar = new AudioRecord.Builder()
+                    .setAudioFormat(fmt)
+                    .setAudioPlaybackCaptureConfig(cfg)
+                    .setBufferSizeInBytes(bufSize)
+                    .build();
+            if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
+                elog("[cap] not initialized state=" + ar.getState());
+                try { ar.release(); } catch (Throwable ignore) {}
+                return false;
+            }
+            ar.startRecording();
+            if (ar.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                elog("[cap] startRecording failed recState=" + ar.getRecordingState());
+                try { ar.release(); } catch (Throwable ignore) {}
+                return false;
+            }
+            captureRecord = ar;
+            return true;
+        } catch (Throwable e) {
+            elog("[cap] open exception " + e.getClass().getSimpleName() + " " + e.getMessage());
+            return false;
+        }
+    }
+    /**
+     * v1.16: 混音读取。
+     * 主轨（麦克风）读完 n 个点后，尝试把内录轨同长度数据叠加进来。
+     * 内录轨读不到/静音就只返回麦克风原始数据，行为与改造前完全一致。
+     */
+    private void readMix(short[] buffer, int n) {
+        AudioRecord cr = captureRecord;
+        if (cr == null || captureRunning == false || n <= 0) return;
+        if (mixBuf == null || mixBuf.length < n) {
+            mixBuf = new short[n];
+        }
+        int cn;
+        try {
+            cn = cr.read(mixBuf, 0, n);
+        } catch (Throwable e) {
+            cn = -1;
+        }
+        if (cn <= 0) {
+            capFail++;
+            if (capFail == 1 || capFail % 20 == 0) {
+                elog("[cap] read ret " + cn + " fail#" + capFail);
+            }
+            if (capFail >= CAPTURE_FAIL_LIMIT) {
+                elog("[cap] too many read fails, release capture track");
+                releaseCapture();
+                emitStatus("内录通道已断开，仅麦克风");
+            }
+            return;
+        }
+        capFail = 0;
+        float capLvl = calcLevel(mixBuf, cn);
+        if (capLvl < CAPTURE_MIN_LEVEL) {
+            // 对方没说话 / 外放静音，不叠加，避免把底噪灌进识别器
+            return;
+        }
+        int len = Math.min(cn, n);
+        for (int i = 0; i < len; i++) {
+            int v = buffer[i] + mixBuf[i];
+            if (v > 32767) v = 32767;
+            else if (v < -32768) v = -32768;
+            buffer[i] = (short) v;
+        }
+        if (iterMixLog++ % 50 == 0) {
+            elog("[cap] mixing capLvl=" + capLvl + " n=" + len);
+        }
+    }
+    /** 混音日志抽样计数 */
+    private long iterMixLog = 0;
+    /** 释放内录轨 */
+    private void releaseCapture() {
+        captureRunning = false;
+        AudioRecord cr = captureRecord;
+        captureRecord = null;
+        mixBuf = null;
+        capFail = 0;
+        if (cr != null) {
+            try {
+                if (cr.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    cr.stop();
+                }
+            } catch (Throwable ignore) {}
+            try { cr.release(); } catch (Throwable ignore) {}
+        }
     }
 
     private void loop() {
@@ -753,6 +911,8 @@ public class SherpaAsrEngine implements AsrEngine {
             readFail = 0;
             lastBeatMs = System.currentTimeMillis();
             totalRead += n;
+            // v1.16: 麦克风轨读完，若有内录轨则把它的同长度数据叠加进来（混音不切换）
+            readMix(buffer, n);
             if (readCost > READ_SLOW_MS) {
                 elog("[loop] SLOW READ cost=" + readCost + "ms n=" + n
                         + " iter=" + iter + " total=" + totalRead);
@@ -873,6 +1033,8 @@ public class SherpaAsrEngine implements AsrEngine {
     }
 
     private void releaseAudio() {
+        // v1.16: 连内录轨一起释放，避免窗口关闭后麦克风/内录被长期占住
+        releaseCapture();
         AudioRecord ar = audioRecord;
         audioRecord = null;
         if (ar != null) {

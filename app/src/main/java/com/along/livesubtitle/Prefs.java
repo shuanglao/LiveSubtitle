@@ -73,13 +73,15 @@ public class Prefs {
 
     // ---------- 音频模式 ----------
     /**
-     * 兼容旧字段（1.14 起不再使用）。
-     * 历史原因：设置页曾有「麦克风 / 内录 / 自动」三段选择，但内录引擎从未实现，
-     * 三个选项实际全部走麦克风，属误导性假开关，已下线。
-     * 保留读取方法仅为兼容老配置文件，避免残留 Toast 逻辑编译不过。
+     * 音频采集模式（1.16 起正式启用，内录引擎已真实实现）。
+     * 0 = 仅麦克风：只采物理麦克风（含 AEC），兼容性最好
+     * 1 = 仅内录：只用 AudioPlaybackCapture 采 App 播放的声音（需 Shizuku 授 CAPTURE_AUDIO_OUTPUT）
+     * 2 = 自动混合（默认）：麦克风 + 内录同时开，两路 PCM 相加，谁有声音都能出字幕
+     * 注：原生电话与微信语音的对方声音属系统级保护，免 root 环境下内录拿不到，
+     *     此时自动混合会退化为「免提 + 麦克风收音」，能出字但双方声音混在一起。
      */
     public int getAudioMode() {
-        return sp.getInt("audio_mode", 0);
+        return sp.getInt("audio_mode", 2);
     }
 
     public void setAudioMode(int v) {

@@ -11,6 +11,9 @@ import android.view.ViewGroup;
 import android.widget.CompoundButton;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.RadioGroup;
+import android.widget.RadioButton;
+import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -431,6 +434,71 @@ public class SettingsActivity extends Activity {
                         Toast.LENGTH_SHORT).show();
             }
         });
+        // ---------------- 采集模式（1.16 三通道混采） ----------------
+        LinearLayout cardMode = card();
+        root.addView(cardMode, cardLp());
+        cardTitle(cardMode, "采集模式", "自动混合：麦克风与外放声音同时采，通话/会议两不误");
+        RadioGroup rgMode = new RadioGroup(this);
+        rgMode.setOrientation(RadioGroup.VERTICAL);
+        String[] modeNames = { "仅麦克风", "仅内录", "自动混合（推荐）" };
+        String[] modeDescs = {
+                "只采物理麦克风，兼容性最好",
+                "只采 App 播放的声音，需下方授权内录",
+                "两路同时采并叠加，谁有声音都能出字幕"
+        };
+        final int curMode = prefs.getAudioMode();
+        for (int mi = 0; mi < 3; mi++) {
+            RadioButton rb = new RadioButton(this);
+            rb.setId(1000 + mi);
+            rb.setText(modeNames[mi] + "
+" + modeDescs[mi]);
+            rb.setTextSize(14);
+            rgMode.addView(rb);
+            if (mi == curMode) rb.setChecked(true);
+        }
+        cardMode.addView(rgMode, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        rgMode.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup g, int id) {
+                int mode = id - 1000;
+                prefs.setAudioMode(mode);
+                Toast.makeText(SettingsActivity.this,
+                        "已切换为：" + modeNamesFor(mode) + "（重新开启字幕后生效）",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+        Button btnCapturePerm = new Button(this);
+        btnCapturePerm.setText("Shizuku 授予内录权限");
+        LinearLayout.LayoutParams bcpLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        bcpLp.topMargin = dp(10);
+        cardMode.addView(btnCapturePerm, bcpLp);
+        btnCapturePerm.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!ShizukuShell.available()) {
+                    Toast.makeText(SettingsActivity.this,
+                            "Shizuku 未连接，无法授权", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                boolean ok = ShizukuShell.grantCaptureAudioOutput(getPackageName());
+                Toast.makeText(SettingsActivity.this,
+                        ok ? "已授予 CAPTURE_AUDIO_OUTPUT"
+                           : "授权失败，请确认 Shizuku 已授予本应用权限",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+        TextView tvModeTip = new TextView(this);
+        tvModeTip.setText("注：原生电话与微信语音的对方声音受系统保护，免 root 下无法直接录制；
+此时请开免提，由麦克风收音（双方声音会混在一起）。");
+        tvModeTip.setTextSize(11);
+        tvModeTip.setTextColor(0xFF888888);
+        LinearLayout.LayoutParams tmtLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tmtLp.topMargin = dp(8);
+        cardMode.addView(tvModeTip, tmtLp);
+
         // ---------------- 音频模式 ----------------
         LinearLayout card7 = card();
         root.addView(card7, cardLp());
@@ -514,6 +582,12 @@ public class SettingsActivity extends Activity {
 
         android.graphics.drawable.Drawable[] layers = {base, glow};
         return new android.graphics.drawable.LayerDrawable(layers);
+    }
+
+    private String modeNamesFor(int m) {
+        if (m == 0) return "仅麦克风";
+        if (m == 1) return "仅内录";
+        return "自动混合";
     }
 
     private LinearLayout card() {

@@ -278,6 +278,22 @@ public final class ShizukuShell {
      * 注意：ColorOS 会裁掉 dumpsys audio 的 recorders 段，因此这里只做「能不能拿到麦」的事实层判断，
      * 不猜「是谁」，避免误报。返回 null 表示无法判定（不提示），返回非空字符串表示有占用者提示文案。
      */
+    // ---------- 1.16 内录权限授予 ----------
+    /**
+     * 授予本应用 CAPTURE_AUDIO_OUTPUT（签名级权限，普通 install 拿不到）。
+     * 走 Shizuku 的 pm grant，成功返回 true。
+     */
+    public static boolean grantCaptureAudioOutput(String pkg) {
+        try {
+            Result r = exec("pm grant " + pkg
+                    + " android.permission.CAPTURE_AUDIO_OUTPUT");
+            String body = (r == null) ? "" : (r.toString() + "");
+            return body.indexOf("Exception") < 0 && body.indexOf("Failure") < 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public static String micBusyHint(String selfPkg) {
         if (!available()) return null;
         Result r = exec("dumpsys audio");
