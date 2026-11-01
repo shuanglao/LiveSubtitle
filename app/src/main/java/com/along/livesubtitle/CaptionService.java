@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.media.projection.MediaProjectionManager;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
@@ -387,6 +388,33 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         HeartbeatReceiver.schedule(this, HeartbeatReceiver.INTERVAL_MS);
     }
 
+    /**
+     * v1.16-alpha5：统一收口的「确保已兑换 MediaProjection」入口。
+     * 三处触发（sticky 重启 / ACTION_START / ACTION_RESTART）都走 startForegroundSafe()，
+     * 由它最先调用本方法，保证前台服务类型判定时 holder 状态已经是最新的。
+     */
+    private void tryEnsureProjection(String from) {
+        try {
+            boolean hadPrj = MediaProjectionHolder.hasProjection();
+            boolean hadToken = MediaProjectionHolder.hasToken();
+            if (hadPrj) {
+                logf("[" + from + "] projection ready (already created)");
+                return;
+            }
+            if (!hadToken) {
+                logf("[" + from + "] no projection token (hasProjection=false hasToken=false), mic only");
+                return;
+            }
+            MediaProjectionManager mpm = (MediaProjectionManager)
+                    getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            android.media.projection.MediaProjection mp = MediaProjectionHolder.createProjection(mpm);
+            logf("[" + from + "] createProjection result=" + (mp != null)
+                    + " hasProjection=" + MediaProjectionHolder.hasProjection());
+        } catch (Throwable t) {
+            logf("[" + from + "] createProjection EXCEPTION " + Log.getStackTraceString(t));
+        }
+    }
+
     private void startEngine() {
         stopEngine();
 
@@ -395,22 +423,10 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
         logf("[engine] start with mic aec=" + prefs.isAecEnabled()
                 + " gain=" + prefs.getMicGainPct() + "%");
 
-        // v1.16：内录权限（MediaProjection）。若设置页已授权，Holder 持有令牌，
-        // 这里直接兑换成 MediaProjection 实体；未授权则只记日志，不阻断麦克风字幕。
-        try {
-            if (!MediaProjectionHolder.hasProjection() && MediaProjectionHolder.hasToken()) {
-                android.media.projection.MediaProjectionManager mpm =
-                        (android.media.projection.MediaProjectionManager)
-                        getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-                android.media.projection.MediaProjection mp = MediaProjectionHolder.createProjection(mpm);
-                logf("[prj] createProjection result=" + (mp != null));
-            } else {
-                logf("[prj] hasProjection=" + MediaProjectionHolder.hasProjection()
-                        + " hasToken=" + MediaProjectionHolder.hasToken());
-            }
-        } catch (Throwable t) {
-            logf("[prj] createProjection EXCEPTION " + Log.getStackTraceString(t));
-        }
+        // v1.16-alpha5：内录权限兑换已统一收口到 tryEnsureProjection()，
+        // 且提前到了 startForegroundSafe() 开头执行（否则前台类型永远拿不到 0x20）。
+        // 这里再兜一次，覆盖「服务已在前台、仅重启引擎」这条路径。
+        tryEnsureProjection("prj");
         engine = new SherpaAsrEngine(this);
         engine.start(new AsrEngine.Callback() {
             @Override
@@ -604,7 +620,12 @@ public class CaptionService extends Service implements CaptionWindow.Listener {
     }
 
     private void startForegroundSafe() {
-        // v1.16：已有 MediaProjection 令牌时，前台类型必须同时带 mediaProjection，
+        // v1.16-alpha5 修复（关键）：原实现里 startForegroundSafe() 永远比
+        // startEngine() 里的 createProjection() 早执行，导致 hasProjection() 恒为 false，
+        // 前台类型永远只能是 0x80（仅麦克风），日志表现为 [fgs] type=0x80 hasProjection=false。
+        // 现在把「兑换令牌」提前到建立前台服务之前，保证类型判定读到真实状态。
+        tryEnsureProjection("fgs");
+        // 已有 MediaProjection 令牌时，前台类型必须同时带 mediaProjection，
         // 否则 AudioRecord 内录轨会被系统静音（Android 10+ 强制要求）。
         // 注意：MEDIA_PROJECTION 常量 API 29+ 才有，低版本用数值 0x20 兜底。
         final int TYPE_MICROPHONE = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;

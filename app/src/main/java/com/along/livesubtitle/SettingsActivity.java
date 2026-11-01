@@ -1051,7 +1051,13 @@ public class SettingsActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_PROJECTION) return;
-        if (resultCode == Activity.RESULT_OK && data != null) {
+        // v1.16-alpha5 埋点：先注入 Context，让 Holder 的日志能落盘到 svc.log
+            MediaProjectionHolder.attachContext(getApplicationContext());
+            Lg.svc(this, "[act] onActivityResult rc=" + requestCode
+                    + " resultCode=" + resultCode
+                    + " data=" + (data != null)
+                    + " dataAction=" + (data == null ? "null" : data.getAction()));
+            if (resultCode == Activity.RESULT_OK && data != null) {
             try {
                 MediaProjectionHolder.put(resultCode, data);
                 Toast.makeText(this, "内录授权成功，重新开启字幕后生效", Toast.LENGTH_LONG).show();
