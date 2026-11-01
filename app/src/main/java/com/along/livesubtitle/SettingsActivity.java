@@ -450,8 +450,7 @@ public class SettingsActivity extends Activity {
         for (int mi = 0; mi < 3; mi++) {
             RadioButton rb = new RadioButton(this);
             rb.setId(1000 + mi);
-            rb.setText(modeNames[mi] + "
-" + modeDescs[mi]);
+            rb.setText(modeNames[mi] + "\n" + modeDescs[mi]);
             rb.setTextSize(14);
             rgMode.addView(rb);
             if (mi == curMode) rb.setChecked(true);
@@ -490,8 +489,8 @@ public class SettingsActivity extends Activity {
             }
         });
         TextView tvModeTip = new TextView(this);
-        tvModeTip.setText("注：原生电话与微信语音的对方声音受系统保护，免 root 下无法直接录制；
-此时请开免提，由麦克风收音（双方声音会混在一起）。");
+        tvModeTip.setText("注：原生电话与微信语音的对方声音受系统保护，免 root 下无法直接录制；\n"
+                + "此时请开免提，由麦克风收音（双方声音会混在一起）。");
         tvModeTip.setTextSize(11);
         tvModeTip.setTextColor(0xFF888888);
         LinearLayout.LayoutParams tmtLp = new LinearLayout.LayoutParams(
